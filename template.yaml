@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Policy inference Lambda for the Go interview case.
+
+Resources:
+  InferApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: dev
+
+  InferFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Events:
+        Infer:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref InferApi
+            Path: /infer
+            Method: post
+            PayloadFormatVersion: '2.0'
+      Environment:
+        Variables:
+          MAX_BODY_BYTES: '1048576'
+          MAX_POLICY_NODES: '1000'
+          MAX_POLICY_EDGES: '5000'
+          MAX_CONDITION_BYTES: '4096'
+          MAX_EXPRESSION_DEPTH: '64'
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: policy-inference-v1

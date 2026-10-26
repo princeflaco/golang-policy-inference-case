@@ -52,7 +52,11 @@ func Handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events
 	if request.RequestContext.HTTP.Method != "POST" {
 		return respond(errorResponse(405, codeMethod, "method must be POST"), codeMethod)
 	}
-	if request.RawPath != "/infer" {
+	path := request.RawPath
+	if stage := request.RequestContext.Stage; stage != "" {
+		path = strings.TrimPrefix(path, "/"+stage)
+	}
+	if path != "/infer" {
 		return respond(errorResponse(404, codeNotFound, "path must be /infer"), codeNotFound)
 	}
 	if !isJSONContentType(request.Headers) {
@@ -116,21 +120,20 @@ func decodeRequest(body []byte) (string, map[string]any, error) {
 
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&raw); err != nil {
 		return "", nil, requestError(codeInvalidJSON, "request body must be a JSON object")
 	}
 	if decoder.More() {
 		return "", nil, requestError(codeInvalidJSON, "request body must contain one JSON value")
 	}
-	if len(raw) != 2 {
-		return "", nil, requestError(codeInvalidJSON, "request must contain exactly policy_dot and input")
-	}
 	if _, ok := raw["policy_dot"]; !ok {
 		return "", nil, requestError(codeInvalidJSON, "policy_dot is required")
 	}
 	if _, ok := raw["input"]; !ok {
-		return "", nil, requestError(codeInvalidJSON, "input is required")
+		return "", nil, requestError(codeInvalidInput, "input is required")
+	}
+	if len(raw) != 2 {
+		return "", nil, requestError(codeInvalidJSON, "request must contain exactly policy_dot and input")
 	}
 
 	var policyDOT string

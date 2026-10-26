@@ -122,7 +122,7 @@ func parseAssignmentLiteral(literal string) (any, error) {
 		}
 		return value, nil
 	}
-	if len(literal) > 0 && (literal[0] >= '0' && literal[0] <= '9' || literal[0] == '-' && len(literal) > 1 && literal[1] >= '0' && literal[1] <= '9') {
+	if looksLikeNumber(literal) {
 		return nil, invalidPolicy("invalid number literal %q", literal)
 	}
 	if simpleStringPattern.MatchString(literal) {
@@ -154,4 +154,25 @@ func unquotePolicyString(literal string) (string, error) {
 		return "", err
 	}
 	return value, nil
+}
+
+func looksLikeNumber(literal string) bool {
+	if literal == "" {
+		return false
+	}
+	first := literal[0]
+	if !(first >= '0' && first <= '9' || first == '-' && len(literal) > 1 && literal[1] >= '0' && literal[1] <= '9') {
+		return false
+	}
+	for i := 0; i < len(literal); i++ {
+		c := literal[i]
+		if c >= '0' && c <= '9' || c == '.' || c == 'e' || c == 'E' {
+			continue
+		}
+		if (c == '-' || c == '+') && i == 0 {
+			continue
+		}
+		return false
+	}
+	return true
 }

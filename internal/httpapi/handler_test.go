@@ -266,7 +266,7 @@ func TestHandleRejectsHTTPContractViolations(t *testing.T) {
 		{"content type", "POST", "/infer", "text/plain", validPayload, 400, codeInvalidJSON},
 		{"malformed json", "POST", "/infer", "application/json", `{`, 400, codeInvalidJSON},
 		{"extra field", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{},"extra":true}`, 400, codeInvalidJSON},
-		{"missing input", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `}`, 400, codeInvalidJSON},
+		{"missing input", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `}`, 400, codeInvalidInput},
 		{"policy type", "POST", "/infer", "application/json", `{"policy_dot":123,"input":{}}`, 400, codeInvalidJSON},
 	}
 	for _, test := range tests {
@@ -377,5 +377,19 @@ func TestHandleLogsDoNotExposePolicyOrInput(t *testing.T) {
 	}
 	if strings.Contains(logs, "super-secret-value") || strings.Contains(logs, "secret_input") {
 		t.Fatalf("log leaked policy or input: %q", logs)
+	}
+}
+
+func TestHandleAcceptsStagedPath(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{"policy_dot": testPolicy, "input": map[string]any{"age": 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := request(string(payload))
+	req.RawPath = "/dev/infer"
+	req.RequestContext.Stage = "dev"
+	response, err := Handle(context.Background(), req)
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("StatusCode = %d, body = %s, err = %v", response.StatusCode, response.Body, err)
 	}
 }

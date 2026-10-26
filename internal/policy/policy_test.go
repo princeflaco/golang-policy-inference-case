@@ -486,3 +486,34 @@ func TestPolicyLimits(t *testing.T) {
 		}
 	})
 }
+
+func TestParseRejectsTopLevelAttrAndUnsupportedDotEscape(t *testing.T) {
+	for name, dot := range map[string]string{
+		"top-level attr": `digraph { rankdir=LR start -> ok [cond="true"] }`,
+		"bad escape":     "digraph { start -> ok [cond=\"true\"] ok [result=\"a\rb\"] }",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(dot); err == nil {
+				t.Fatal("Parse() expected error")
+			}
+		})
+	}
+}
+
+func TestParseResultAcceptsDigitLeadingSimpleStrings(t *testing.T) {
+	got, err := parseResult("a=123abc, b=1_000, c=1-2, d=x1")
+	if err != nil {
+		t.Fatalf("parseResult() error = %v", err)
+	}
+	want := []any{"123abc", "1_000", "1-2", "x1"}
+	for i, assignment := range got {
+		if assignment.value != want[i] {
+			t.Fatalf("assignment[%d] = %#v, want %#v", i, assignment.value, want[i])
+		}
+	}
+	for _, literal := range []string{"1e3", ".5", "1."} {
+		if _, err := parseResult("x=" + literal); err == nil {
+			t.Fatalf("parseResult(x=%s) expected error", literal)
+		}
+	}
+}

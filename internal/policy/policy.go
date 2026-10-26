@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	godot "gonum.org/v1/gonum/graph/formats/dot"
@@ -191,18 +190,16 @@ func Parse(dot string) (*Policy, error) {
 		case *gvast.AttrStmt:
 			return nil, invalidPolicy("default graph, node, or edge attributes are not supported")
 		case *gvast.Attr:
-			// A top-level key=value statement is graph metadata, not policy behavior.
+			return nil, invalidPolicy("top-level attributes are not supported")
 		default:
 			return nil, invalidPolicy("unsupported DOT statement %T", stmt)
 		}
 	}
 
-	startNode, ok := p.nodes[identifierStart]
-	if !ok {
+	if _, ok := p.nodes[identifierStart]; !ok {
 		return nil, invalidPolicy("policy graph must contain a start node")
 	}
 	p.start = identifierStart
-	_ = startNode
 
 	if hasCycle(p.nodes) {
 		return nil, invalidPolicy("policy graph must not contain cycles")
@@ -272,14 +269,36 @@ func rejectDuplicateAttrs(attrs []*gvast.Attr) error {
 }
 
 func dotAttrValue(raw string) (string, error) {
-	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		value, err := strconv.Unquote(raw)
-		if err != nil {
-			return "", fmt.Errorf("invalid quoted DOT value %q", raw)
-		}
-		return value, nil
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return raw, nil
 	}
-	return raw, nil
+	inner := raw[1 : len(raw)-1]
+	var value strings.Builder
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '\\' {
+			value.WriteByte(inner[i])
+			continue
+		}
+		i++
+		if i >= len(inner) {
+			return "", fmt.Errorf("unterminated escape in DOT value %q", raw)
+		}
+		var decoded byte
+		switch inner[i] {
+		case '"':
+			decoded = '"'
+		case '\\':
+			decoded = '\\'
+		case 'n':
+			decoded = '\n'
+		case 't':
+			decoded = '\t'
+		default:
+			return "", fmt.Errorf("unsupported escape \\%c in DOT value", inner[i])
+		}
+		value.WriteByte(decoded)
+	}
+	return value.String(), nil
 }
 
 func hasCycle(nodes map[string]*node) bool {

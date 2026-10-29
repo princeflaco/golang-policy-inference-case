@@ -1,0 +1,24 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /infer",
+  "rawPath": "/infer",
+  "rawQueryString": "",
+  "headers": {
+    "content-type": "application/json",
+    "host": "localhost"
+  },
+  "requestContext": {
+    "requestId": "perf-event-1",
+    "http": {
+      "method": "POST",
+      "path": "/infer",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "perf"
+    },
+    "stage": "dev",
+    "timeEpoch": 0
+  },
+  "body": "{\"policy_dot\":\"digraph P { start [result=\\\"tier=base\\\"] score [result=\\\"score=710\\\"] segment [result=\\\"segment=\\\\\\\"basic\\\\\\\"\\\"] high [result=\\\"approved=true\\\"] low [result=\\\"approved=false,reason=\\\\\\\"score\\\\\\\"\\\"] start -> score [cond=\\\"age>=18\\\"] start -> segment [cond=\\\"age<18\\\"] score -> high [cond=\\\"score>700 && segment==\\\\\\\"prime\\\\\\\" && active\\\"] score -> low [cond=\\\"score<=700 || segment==\\\\\\\"basic\\\\\\\"\\\"] segment -> high [cond=\\\"segment==\\\\\\\"prime\\\\\\\" && active\\\"] segment -> low [cond=\\\"segment==\\\\\\\"basic\\\\\\\"\\\"] }\",\"input\":{\"age\":20,\"score\":700,\"segment\":\"prime\",\"active\":true}}",
+  "isBase64Encoded": false
+}

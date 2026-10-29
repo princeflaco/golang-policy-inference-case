@@ -6,7 +6,7 @@ COVER_MIN ?= 90
 COVER_PKGS := ./cmd/...,./internal/...
 
 .PHONY: all fmt test test-race vet cover build build-lambda bench load-test perf-container \
-	run debug swagger install-hooks check docker-build sam-build sam-local clean help
+	run debug swagger install-hooks check docker-build sam-build sam-local cold-start clean help
 
 all: fmt vet test build
 
@@ -18,7 +18,7 @@ help:
 	@echo run debug                     - local HTTP server; debug also sets log level debug
 	@echo bench load-test perf-container- performance evidence
 	@echo swagger install-hooks         - regenerate docs/swagger and install git hooks
-	@echo docker-build sam-build sam-local clean
+	@echo docker-build sam-build sam-local cold-start clean
 
 fmt:
 	$(GO) fmt ./...
@@ -67,6 +67,14 @@ sam-build:
 # container per invocation and can saturate the local Docker daemon.
 sam-local:
 	$(SAM) local start-api --warm-containers EAGER
+
+# Cold-start evidence: each `sam local invoke` creates a fresh container,
+# so every invocation is a cold start. The script reports Init Duration,
+# Duration and wall time per invoke. COLD_START_N overrides the count.
+COLD_START_N ?= 10
+
+cold-start: sam-build
+	SAM=$(SAM) sh tools/perf/cold-start.sh $(COLD_START_N)
 
 clean:
 	$(GO) clean

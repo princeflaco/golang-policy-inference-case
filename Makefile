@@ -49,3 +49,13 @@ sam-local:
 clean:
 	$(GO) clean
 	rm -rf build
+
+# Neutral-environment perf run: app in a distroless container, k6 as the
+# load generator. App and generator are separate containers.
+perf-container:
+	docker build -f tools/perf/Dockerfile -t policy-inference-perf .
+	-docker rm -f perf-app
+	docker run -d --name perf-app -p 8080:8080 policy-inference-perf
+	sleep 2
+	docker run --rm -i --add-host=host.docker.internal:host-gateway 		-e BASE_URL=http://host.docker.internal:8080 		grafana/k6 run - < tools/perf/k6.js
+	-docker rm -f perf-app

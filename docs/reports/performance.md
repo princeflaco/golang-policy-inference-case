@@ -73,3 +73,18 @@ only 5 objects per call (the output map and entries).
   `sam local start-api --warm-containers EAGER` (`make sam-local`).
 - Latency is dominated by HTTP round-trip + JSON decode; at 1.1 µs of engine
   work, `Infer` is not the bottleneck — per-request `Parse` is.
+
+## Results — containerised k6 run (neutral environment)
+
+App runs in a distroless container (`tools/perf/Dockerfile`, `HTTP_ADDR=:8080`,
+same binary as the Lambda image); the load generator is `grafana/k6` in a
+separate container. Reproduce with `make perf-container`.
+
+- 10 s warmup + 60 s measurement at 50 iterations/s (constant-arrival-rate)
+- 3 502 requests, 0 failures, 100% checks passed
+- http_req_duration: avg 2.15 ms, med 2.04 ms, **p(90) 2.56 ms**, p(95) 2.8 ms, max 15.87 ms
+- Thresholds met: `http_req_failed rate==0`, `p(90)<30`
+
+This is the closest neutral measurement available locally: Linux container,
+isolated process, external load tool — still excluding Lambda cold start and
+API Gateway hops.

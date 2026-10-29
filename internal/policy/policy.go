@@ -30,6 +30,12 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
+// NodeCount returns the number of nodes referenced by the policy graph.
+func (p *Policy) NodeCount() int { return len(p.nodes) }
+
+// EdgeCount returns the number of edge declarations in the policy graph.
+func (p *Policy) EdgeCount() int { return p.edges }
+
 func invalidPolicy(format string, args ...any) error {
 	return &Error{Kind: InvalidPolicy, Message: fmt.Sprintf(format, args...)}
 }
@@ -41,6 +47,7 @@ func inferenceError(format string, args ...any) error {
 // Policy is the executable model built from a DOT graph.
 type Policy struct {
 	nodes map[string]*node
+	edges int
 	start string
 }
 
@@ -92,6 +99,7 @@ func Parse(dot string, opts ...Option) (*Policy, error) {
 	if edgeCount > limits.MaxPolicyEdges {
 		return nil, invalidPolicy("policy has %d edges; limit is %d", edgeCount, limits.MaxPolicyEdges)
 	}
+	p.edges = edgeCount
 
 	getNode := func(name string) *node {
 		if existing, ok := p.nodes[name]; ok {

@@ -8,15 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
 	"github.com/princeflaco/golang-policy-inference-case/internal/policy"
 )
 
@@ -39,13 +38,14 @@ type errorBody struct {
 	Message string `json:"message"`
 }
 
-// Handle translates an API Gateway HTTP API v2 request into a policy
+// Handle is the request pipeline: correlation id, request logging, then the
+// inference handler itself.
+var Handle = Chain(core, CorrelationID(), RequestLogging())
+
+// core translates an API Gateway HTTP API v2 request into a policy
 // inference. It intentionally contains no policy evaluation rules.
-func Handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	_ = ctx
-	started := time.Now()
+func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	respond := func(response events.APIGatewayV2HTTPResponse, code string) (events.APIGatewayV2HTTPResponse, error) {
-		slog.Info("infer request completed", "status", response.StatusCode, "code", code, "duration_ms", time.Since(started).Milliseconds())
 		return response, nil
 	}
 
@@ -76,14 +76,21 @@ func Handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events
 		return respond(errorResponse(400, errorCode(err), err.Error()), errorCode(err))
 	}
 
+	parseCtx, parseSpan := observability.StartSpan(ctx, "policy.parse")
 	parsed, err := policy.Parse(policyDOT)
+	parseSpan.End(parseCtx)
 	if err != nil {
 		return respond(errorResponse(400, codeInvalidPolicy, publicMessage(err)), codeInvalidPolicy)
 	}
+	observability.Logger(ctx).Info("policy parsed", "nodes", parsed.NodeCount(), "edges", parsed.EdgeCount())
+
+	inferCtx, inferSpan := observability.StartSpan(ctx, "policy.infer")
 	output, err := parsed.Infer(input)
+	inferSpan.End(inferCtx)
 	if err != nil {
 		return respond(errorResponse(400, codeInferenceError, publicMessage(err)), codeInferenceError)
 	}
+	observability.Logger(ctx).Info("inference completed", "input_vars", len(input), "output_vars", len(output))
 
 	payload, err := json.Marshal(map[string]any{"output": output})
 	if err != nil {

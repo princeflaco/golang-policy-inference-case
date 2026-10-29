@@ -18,39 +18,26 @@ import (
 // @BasePath    /
 // @schemes     http
 func main() {
-	// Flags override configuration so Makefile targets stay portable (env
-	// prefixes like `HTTP_ADDR=:8080 cmd` are POSIX-only).
+	// Flags are overrides with the highest precedence. They keep Makefile
+	// targets portable: env prefixes like `HTTP_ADDR=:8080 cmd` are
+	// POSIX-only.
 	httpAddr := flag.String("http-addr", "", "serve plain HTTP on this address instead of the Lambda runtime")
-	logLevelFlag := flag.String("log-level", "", "log level: debug, info, warn, error")
+	logLevel := flag.String("log-level", "", "log level: debug, info, warn, error")
 	flag.Parse()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(map[string]string{config.HTTPAddr: *httpAddr, config.LogLevel: *logLevel})
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
-
-	level := cfg.LogLevel
-	if *logLevelFlag != "" {
-		level = *logLevelFlag
-	}
-	var parsedLevel slog.Level
-	if err := parsedLevel.UnmarshalText([]byte(level)); err != nil {
-		slog.Error("invalid log level", "level", level)
-		os.Exit(1)
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parsedLevel})))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.Level()})))
 
 	// HTTP_ADDR switches the binary into a plain HTTP server. The Lambda
 	// image leaves it unset; local development and the containerised perf
-	// harness set it (e.g. HTTP_ADDR=:8080 or -http-addr=:8080).
-	addr := cfg.HTTPAddr
-	if *httpAddr != "" {
-		addr = *httpAddr
-	}
-	if addr != "" {
-		slog.Info("starting http server", "addr", addr)
-		if err := http.ListenAndServe(addr, httpapi.HTTPHandler()); err != nil {
+	// harness set it.
+	if cfg.HTTPAddr != "" {
+		slog.Info("starting http server", "addr", cfg.HTTPAddr)
+		if err := http.ListenAndServe(cfg.HTTPAddr, httpapi.HTTPHandler()); err != nil {
 			slog.Error("http server", "error", err)
 			os.Exit(1)
 		}

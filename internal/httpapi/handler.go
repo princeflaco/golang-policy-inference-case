@@ -68,7 +68,7 @@ var Handle = Chain(core, CorrelationID(), RequestLogging())
 //	@Failure		500		{object}	apperr.Error	"unexpected internal failure"
 //	@Router			/infer [post]
 func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	cfg, err := config.Load()
+	cfg, err := config.Load(nil)
 	if err != nil {
 		observability.Logger(ctx).Error("invalid configuration", "error", err)
 		return fail(ctx, apperr.New(apperr.Internal, "invalid configuration"))

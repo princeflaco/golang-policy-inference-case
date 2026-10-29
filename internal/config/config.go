@@ -1,14 +1,16 @@
-// Package config externalizes every runtime setting through viper.
-// Precedence: environment variables > .env file (if present) > defaults.
-// The .env file is read once per process; env vars are read per Load call so
-// tests using t.Setenv keep working.
+// Package config is the only module that reads the process environment.
+// Precedence: overrides (command-line flags) > environment variables >
+// .env file in the working directory (if present) > defaults. Load is meant
+// to run once at startup; the result is injected into the rest of the
+// service.
 package config
 
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
-	"sync"
 
 	"github.com/princeflaco/golang-policy-inference-case/internal/policy"
 	"github.com/spf13/viper"
@@ -18,17 +20,30 @@ import (
 // MAX_BODY_BYTES is unset.
 const DefaultMaxBodyBytes = 1048576
 
+// Setting names, shared by environment variables, .env keys and overrides.
+const (
+	HTTPAddr           = "HTTP_ADDR"
+	LogLevel           = "LOG_LEVEL"
+	MaxBodyBytes       = "MAX_BODY_BYTES"
+	MaxPolicyNodes     = "MAX_POLICY_NODES"
+	MaxPolicyEdges     = "MAX_POLICY_EDGES"
+	MaxConditionBytes  = "MAX_CONDITION_BYTES"
+	MaxExpressionDepth = "MAX_EXPRESSION_DEPTH"
+)
+
+var settings = []string{HTTPAddr, LogLevel, MaxBodyBytes, MaxPolicyNodes, MaxPolicyEdges, MaxConditionBytes, MaxExpressionDepth}
+
 // Config holds every runtime setting of the service.
 type Config struct {
 	// HTTPAddr switches the binary into a plain HTTP server when set
 	// (e.g. ":8080"). Empty means AWS Lambda mode.
 	HTTPAddr string `mapstructure:"HTTP_ADDR"`
 
-	// MaxBodyBytes bounds the request body size.
-	MaxBodyBytes int `mapstructure:"MAX_BODY_BYTES"`
-
 	// LogLevel selects the slog level: debug, info, warn, or error.
 	LogLevel string `mapstructure:"LOG_LEVEL"`
+
+	// MaxBodyBytes bounds the request body size.
+	MaxBodyBytes int `mapstructure:"MAX_BODY_BYTES"`
 
 	// Policy parse limits; see policy.Limits.
 	MaxPolicyNodes     int `mapstructure:"MAX_POLICY_NODES"`
@@ -47,36 +62,49 @@ func (c *Config) Limits() policy.Limits {
 	}
 }
 
-var (
-	dotenvOnce sync.Once
-	dotenvRaw  []byte
-)
+// Level returns the parsed log level. Load has already validated it.
+func (c *Config) Level() slog.Level {
+	var level slog.Level
+	_ = level.UnmarshalText([]byte(c.LogLevel))
+	return level
+}
 
-// Load resolves the effective configuration. Missing or non-positive values
-// fall back to the documented defaults; .env parse failures are surfaced.
-func Load() (*Config, error) {
+// Load resolves and validates the effective configuration. overrides maps
+// setting names to values with the highest precedence; empty values are
+// ignored so unset flags fall through to the environment.
+func Load(overrides map[string]string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType("env")
-
-	for _, key := range []string{
-		"HTTP_ADDR", "MAX_BODY_BYTES", "MAX_POLICY_NODES", "MAX_POLICY_EDGES",
-		"MAX_CONDITION_BYTES", "MAX_EXPRESSION_DEPTH", "LOG_LEVEL",
-	} {
+	for _, key := range settings {
 		if err := v.BindEnv(key); err != nil {
 			return nil, err
 		}
 	}
-	defaultLimits := policy.DefaultLimits()
-	v.SetDefault("MAX_BODY_BYTES", DefaultMaxBodyBytes)
-	v.SetDefault("LOG_LEVEL", "info")
-	v.SetDefault("MAX_POLICY_NODES", defaultLimits.MaxPolicyNodes)
-	v.SetDefault("MAX_POLICY_EDGES", defaultLimits.MaxPolicyEdges)
-	v.SetDefault("MAX_CONDITION_BYTES", defaultLimits.MaxConditionBytes)
-	v.SetDefault("MAX_EXPRESSION_DEPTH", defaultLimits.MaxExpressionDepth)
 
-	if raw := dotenv(); raw != nil {
+	defaults := policy.DefaultLimits()
+	v.SetDefault(LogLevel, "info")
+	v.SetDefault(MaxBodyBytes, DefaultMaxBodyBytes)
+	v.SetDefault(MaxPolicyNodes, defaults.MaxPolicyNodes)
+	v.SetDefault(MaxPolicyEdges, defaults.MaxPolicyEdges)
+	v.SetDefault(MaxConditionBytes, defaults.MaxConditionBytes)
+	v.SetDefault(MaxExpressionDepth, defaults.MaxExpressionDepth)
+
+	raw, err := os.ReadFile(".env")
+	switch {
+	case err == nil:
 		if err := v.ReadConfig(bytes.NewReader(raw)); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read .env: %w", err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+
+	for key, value := range overrides {
+		if !isSetting(key) {
+			return nil, fmt.Errorf("unknown setting %q", key)
+		}
+		if value != "" {
+			v.Set(key, value)
 		}
 	}
 
@@ -85,20 +113,23 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if cfg.MaxBodyBytes <= 0 {
-		return nil, errors.New("MAX_BODY_BYTES must be positive")
+		return nil, fmt.Errorf("%s must be positive", MaxBodyBytes)
 	}
 	if err := cfg.Limits().Validate(); err != nil {
 		return nil, err
 	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
+		return nil, fmt.Errorf("%s: %w", LogLevel, err)
+	}
 	return &cfg, nil
 }
 
-// dotenv reads .env once; a missing file is not an error.
-func dotenv() []byte {
-	dotenvOnce.Do(func() {
-		if raw, err := os.ReadFile(".env"); err == nil {
-			dotenvRaw = raw
+func isSetting(key string) bool {
+	for _, setting := range settings {
+		if setting == key {
+			return true
 		}
-	})
-	return dotenvRaw
+	}
+	return false
 }

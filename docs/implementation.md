@@ -41,8 +41,7 @@ Depois do fechamento de R0–R7, uma etapa de consolidação e tooling:
   isolado no `httpapi` (o motor não conhece HTTP).
 - **Constantes centralizadas**: defaults de limites (`policy.DefaultLimits`),
   tamanho de corpo (`config.DefaultMaxBodyBytes`), gramática de
-  identificadores (`policy.IsIdentifier`) e nomes de atributos DOT em um só
-  lugar cada.
+  identificadores e nomes de atributos DOT em um só lugar cada.
 - **Observabilidade**: log de request passou a incluir o `code` de erro;
   `LOG_LEVEL` + flags `-http-addr`/`-log-level` permitem `make debug` sem
   depender de sintaxe POSIX de ambiente.
@@ -55,6 +54,44 @@ Depois do fechamento de R0–R7, uma etapa de consolidação e tooling:
 - **Makefile portátil**: alvos `run`, `debug`, `load-test`, `swagger`,
   `check`, `help` funcionando em shells Windows e POSIX; o gating do teste
   de carga virou flag `-load` em vez de variável de ambiente.
+
+## Revisão de arquitetura
+
+Uma revisão orientada pelos pontos que mais mudaram no histórico
+(`policy.go`, `handler.go`, `main.go`, `limits.go`, `server.go`) buscou
+módulos rasos e conhecimento duplicado entre módulos. Ela confirmou um bug
+de contrato: no modo HTTP, corpo acima do limite respondia `400` em texto
+puro, sem `request_too_large` nem `x-correlation-id` (AC12). Mudanças:
+
+- **Uma origem de configuração**: o ambiente era lido em quatro pontos, três
+  deles por requisição, e `Parse` lia `MAX_POLICY_*` mesmo recebendo
+  `WithLimits`. Agora `config.Load` roda uma vez no `main`, com flags como
+  camada de maior precedência, e valida tudo na carga. `Parse(dot, limits)`
+  recebe os limites explicitamente; `LimitsFromEnv`, `Option` e
+  `WithLimits` deixaram de existir.
+- **Um pipeline, dois adapters**: o evento do API Gateway era a interface
+  do pipeline, e cada transporte refazia a tradução — inclusive o teste de
+  carga, que media um caminho diferente do de produção. O `httpapi.Service`
+  agora opera sobre uma requisição neutra de transporte; `Lambda` (stage,
+  base64, request id) e `ServeHTTP` são adapters finos, e o limite de corpo
+  é verificado uma só vez, dentro do pipeline.
+- **Condições compiladas no parse**: validar e avaliar eram dois
+  type-switches paralelos sobre `go/ast`. O parse compila cada condição em
+  nós tipados; a gramática existe uma vez e a inferência só falha por
+  estado (variável ausente, tipos incompatíveis). `Infer` caiu de 5 para 2
+  alocações por chamada.
+- **Um dono para a entrada**: a regra dos identificadores era checada no
+  decode HTTP e de novo no `Infer`, com códigos diferentes. `Infer` passou a
+  ser o dono do contrato da entrada (`invalid_input`), e o decode lê o JSON
+  em uma única passada.
+- **Leitura de strings com aspas em um módulo**: quatro laços com estado
+  `inString`/`escaped` viraram `quoting.go`.
+- **Logging**: a resposta carrega o código de erro, então o middleware não
+  desserializa mais o corpo; loggers podem ser injetados pelo contexto, o
+  que tirou os testes do estado global.
+- **Cobertura mínima de 90%**: `make cover` mede `cmd/` e `internal/`
+  (sem o swagger gerado) e falha abaixo do piso; `make check` e o pre-commit
+  usam esse alvo.
 
 ## Referências
 

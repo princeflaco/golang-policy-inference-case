@@ -40,8 +40,9 @@ seções abaixo para reproduzir.
 ## Verificação
 
 ```bash
-go test ./...        # ou: make check (fmt + vet + test)
+go test ./...        # ou: make check (fmt + vet + testes com cobertura)
 go vet ./...
+make cover           # cobertura total de cmd/ e internal/; falha abaixo de 90%
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./build/infer ./cmd/infer
 sam build
 sam local start-api --warm-containers EAGER
@@ -97,7 +98,7 @@ Configuração por variáveis de ambiente, com os defaults também definidos em 
 
 `HTTP_ADDR` (sem default) liga o modo HTTP local; `-http-addr` e `-log-level` sobrescrevem as variáveis equivalentes.
 
-Corpo acima do limite retorna HTTP 413 com `request_too_large`. Limites da política retornam `invalid_policy`. Cada requisição gera um log estruturado com status, código e duração, sem gravar o DOT ou valores de `input`.
+A configuração é lida e validada uma única vez na inicialização; valores inválidos (limites não positivos, nível de log desconhecido) impedem o binário de subir. Corpo acima do limite retorna HTTP 413 com `request_too_large`, tanto no Lambda quanto no modo HTTP. Limites da política retornam `invalid_policy`. Cada requisição gera um log estruturado com status, código e duração, sem gravar o DOT ou valores de `input`.
 
 ## Desempenho observado
 
@@ -116,16 +117,16 @@ São medições locais: não incluem cold start de Lambda nem API Gateway. Para 
 
 ## Estrutura
 
-- `cmd/infer`: entrypoint — Lambda por padrão, HTTP puro quando `HTTP_ADDR` está definido.
-- `internal/policy`: parsing e validação DOT, modelo do grafo, condições, atribuições e inferência. Limites do `Parse` usam *Functional Options* (`policy.WithLimits`).
-- `internal/httpapi`: contrato HTTP/API Gateway v2, middleware (correlation id, request logging) e adaptador `net/http`.
+- `cmd/infer`: entrypoint — carrega a configuração uma vez, monta o serviço e o executa como Lambda (padrão) ou servidor HTTP (`HTTP_ADDR`).
+- `internal/policy`: o motor. `Parse(dot, limits)` valida a política inteira e compila cada condição em nós tipados; `Infer` é dono do contrato da entrada e executa o percurso. Não lê ambiente nem conhece HTTP.
+- `internal/httpapi`: um único pipeline (`Service`) sobre uma requisição neutra de transporte, com dois adapters finos — `Lambda` (API Gateway v2: stage, base64, request id) e `ServeHTTP` (net/http). O limite de corpo, o contrato de erros, o correlation id e o logging valem igualmente nos dois.
 - `internal/apperr`: códigos de erro do contrato (`code`/`message`) compartilhados pelas camadas.
-- `internal/config`: configuração por variáveis de ambiente e `.env` via viper.
-- `internal/observability`: correlation id, spans e logger `slog` enriquecido por contexto.
+- `internal/config`: único módulo que lê o ambiente; precedência flags > env > `.env` > defaults, validada na carga.
+- `internal/observability`: correlation id, spans e logger `slog` por contexto (injetável em testes via `WithLogger`).
 - `Dockerfile` e `template.yaml`: imagem Lambda e execução local com SAM.
 - `tools/api`: requests prontos (.http e collection Postman); `tools/perf`: harness k6 + Dockerfile da imagem de teste.
 - `docs/`: spec, enunciado, processo de implementação, OpenAPI gerada e relatório de performance.
-- `scripts/pre-commit`: hook versionado (gofmt, vet, testes e frescor do swagger); habilitar uma vez por clone com `make install-hooks`.
+- `scripts/pre-commit`: hook versionado (gofmt, vet, testes com piso de 90% de cobertura e frescor do swagger); habilitar uma vez por clone com `make install-hooks`.
 - `internal/policy/policy_bench_test.go` e `internal/httpapi/handler_load_test.go`: evidências de desempenho.
 
 ## Documentação da API
@@ -134,6 +135,6 @@ O contrato `POST /infer` é gerado das anotações `swag` em `internal/httpapi/h
 
 ## Ferramentas e teste manual
 
-- **Makefile**: `make help` lista os alvos — `fmt`, `test`, `test-race`, `vet`, `check`, `build`, `build-lambda`, `bench`, `load-test`, `perf-container`, `run`, `debug`, `swagger`, `install-hooks`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
+- **Makefile**: `make help` lista os alvos — `fmt`, `test`, `test-race`, `vet`, `cover`, `check`, `build`, `build-lambda`, `bench`, `load-test`, `perf-container`, `run`, `debug`, `swagger`, `install-hooks`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
 - `tools/api/policy-inference.http` — requests prontos para VS Code (extensão REST Client) ou Rider/IntelliJ; ajuste a variável `@host`.
 - `tools/api/policy-inference.postman_collection.json` — collection Postman/Insomnia com happy paths, casos de erro e testes automáticos de status/código/correlation id.

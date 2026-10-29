@@ -22,46 +22,57 @@ condições mistas (`>=`, `==`, `&&`/`||`), 4 variáveis de entrada (`age`,
 go test -run '^$' -bench . -benchmem -count=3 ./internal/policy
 
 # Carga HTTP: 50 RPS ofertados, 10 s de aquecimento + 60 s de medição
-go test -run TestHTTPLoad -load ./internal/httpapi -v   # ou: make load-test
+go test ./internal/httpapi -run TestHTTPLoad -v -args -load   # ou: make load-test
 ```
 
-## Resultados — benchmarks do motor (mediana de 3 execuções)
+## Resultados — benchmarks do motor (3 execuções)
+
+Medição após a revisão de arquitetura, com as condições compiladas em nós
+tipados no parse:
 
 | Operação | ns/op | B/op | alocações/op |
 | --- | ---: | ---: | ---: |
-| `Parse` (política média) | ~40 558 | 21 772 | 428 |
-| `Infer` | ~1 096 | 368 | 5 |
-| `Parse + Infer` | ~38 743 | 22 140 | 433 |
+| `Parse` (política média) | ~43 000 | 21 508 | 455 |
+| `Infer` | ~960 | 336 | 2 |
+| `Parse + Infer` | ~40 800 | 21 844 | 457 |
 
-Leitura: inferência é ~37× mais barata que parsing (1 µs vs 40 µs). Um serviço
-que re-parseia a mesma política a cada requisição gasta ~97% da CPU no parser —
-um cache `policy → *Policy` indexado por hash do conteúdo é a otimização de
-maior valor se políticas se repetem entre invocações. `Infer` em si aloca
-apenas 5 objetos por chamada (o mapa de saída e suas entradas).
+Antes da revisão, `Infer` alocava 5 objetos por chamada (~1 096 ns/op) e
+re-percorria a AST do `go/parser` a cada avaliação; agora executa nós já
+compilados e aloca só o mapa de estado. O `Parse` ficou no mesmo patamar,
+dentro do ruído entre execuções.
+
+Leitura: inferência é ~40× mais barata que parsing (~1 µs vs ~40 µs). Um
+serviço que re-parseia a mesma política a cada requisição gasta ~97% da CPU
+no parser — um cache `policy → *Policy` indexado por hash do conteúdo é a
+otimização de maior valor se políticas se repetem entre invocações.
 
 ## Resultados — teste de carga HTTP (50 RPS, 60 s)
+
+O teste exercita o adapter `net/http` de produção (`httpapi.Service`), o
+mesmo que o servidor local e a imagem de perf usam; antes da revisão de
+arquitetura ele usava uma tradução própria da requisição.
 
 ```json
 {
   "offered_rps": 50,
-  "achieved_rps": 49.9999,
+  "achieved_rps": 49.9997,
   "requests": 3000,
   "errors": 0,
   "statuses": {"200": 3000},
-  "mean_ms": 0.5034,
-  "p50_ms":   0.4679,
-  "p90_ms":   0.8744,
-  "p99_ms":   1.2483,
-  "max_ms":   5.8549
+  "mean_ms": 0.5683,
+  "p50_ms":   0.5161,
+  "p90_ms":   0.9722,
+  "p99_ms":   1.4826,
+  "max_ms":   6.4754
 }
 ```
 
 | Métrica | Valor | Meta | Resultado |
 | --- | ---: | ---: | --- |
-| RPS ofertado → alcançado | 50 → 49,9999 | sustentar 50 | passou |
+| RPS ofertado → alcançado | 50 → 49,9997 | sustentar 50 | passou |
 | Erros / não-200 | 0 / 0 | 0 | passou |
-| Latência P90 | 0,874 ms | < 30 ms | passou (~34× de folga) |
-| Latência máxima | 5,85 ms | — | passou |
+| Latência P90 | 0,972 ms | < 30 ms | passou (~30× de folga) |
+| Latência máxima | 6,48 ms | — | passou |
 
 ## Ressalvas
 
@@ -71,7 +82,7 @@ apenas 5 objetos por chamada (o mapa de saída e suas entradas).
   padrão cria um container `rapid-x86_64` por invocação e saturou o daemon
   Docker local (~1 900 containers, timeouts/502). Qualquer medição futura via
   SAM deve usar `sam local start-api --warm-containers EAGER` (`make sam-local`).
-- A latência é dominada pelo round-trip HTTP + decode do JSON; com 1,1 µs de
+- A latência é dominada pelo round-trip HTTP + decode do JSON; com ~1 µs de
   trabalho do motor, `Infer` não é o gargalo — o `Parse` por requisição é.
 
 ## Resultados — execução k6 containerizada (ambiente neutro)
@@ -79,6 +90,7 @@ apenas 5 objetos por chamada (o mapa de saída e suas entradas).
 A aplicação roda em container distroless (`tools/perf/Dockerfile`,
 `HTTP_ADDR=:8080`, mesmo binário da imagem Lambda); o gerador de carga é
 `grafana/k6` em container separado. Reproduzir com `make perf-container`.
+Esta medição é anterior à revisão de arquitetura e não foi repetida depois.
 
 - 10 s de aquecimento + 60 s de medição a 50 iterações/s (constant-arrival-rate)
 - 3 502 requisições, 0 falhas, 100% dos checks aprovados

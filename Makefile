@@ -55,7 +55,7 @@ bench:
 # HTTP load test: 50 RPS, 10s warmup + 60s measurement via httptest.
 # Gated behind the -load test flag; safe (no Docker containers are spawned).
 load-test:
-	$(GO) test -run TestHTTPLoad -load -v ./internal/httpapi
+	$(GO) test ./internal/httpapi -run TestHTTPLoad -v -args -load
 
 docker-build:
 	docker build -t policy-inference .

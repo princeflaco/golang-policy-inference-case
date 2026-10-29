@@ -8,7 +8,8 @@ description: How to build, test, run, and verify this repo. Use before running c
 `make help` lists targets. The daily ones:
 
 ```bash
-make check        # fmt + vet + unit tests — run before finishing any change
+make check        # fmt + vet + cover — run before finishing any change
+make cover        # tests with total coverage of cmd/ + internal/; fails below 90%
 make run          # local HTTP server on :8080 (flags, not env — Windows-safe)
 make debug        # same, with LOG_LEVEL=debug
 make swagger      # regenerate docs/swagger after touching contract or annotations
@@ -25,8 +26,9 @@ targets portable the same way.
 
 Run `make swagger` and **stage `docs/swagger/`**. The versioned pre-commit
 hook (`scripts/pre-commit`, enabled with `make install-hooks` /
-`git config core.hooksPath scripts`) runs gofmt, vet, `go test ./...` and
-fails if regenerated swagger differs from what's committed.
+`git config core.hooksPath scripts`) runs gofmt, vet, `make cover` (tests +
+90% coverage floor) and fails if regenerated swagger differs from what's
+committed.
 
 The contract docs (`docs/swagger`) are generated artifacts — annotate
 handlers, don't hand-edit generated files. There is intentionally no swagger
@@ -37,15 +39,22 @@ UI endpoint: the spec rejects any path other than `/infer`.
 Precedence: **flags > env > `.env` > defaults**. Runtime vars: `HTTP_ADDR`,
 `LOG_LEVEL`, `MAX_BODY_BYTES`, `MAX_POLICY_NODES`, `MAX_POLICY_EDGES`,
 `MAX_CONDITION_BYTES`, `MAX_EXPRESSION_DEPTH`. Adding one means touching:
-`internal/config/config.go`, `.env.example`, `template.yaml`, the README
-table — and `internal/policy/limits.go` if it is a policy limit.
+`internal/config/config.go` (setting constant + `settings` list + field),
+`.env.example`, `template.yaml`, the README table — and
+`internal/policy/limits.go` if it is a policy limit. Config is loaded once
+in `cmd/infer/main.go` and injected; tests build `httpapi.Settings` /
+`policy.Limits` directly instead of using `t.Setenv`.
 
 ## Verification expectations
 
-- `go test ./...` and `go vet ./...` must pass; `gofmt -l .` must be empty.
+- `make cover` (≥ 90% total) and `go vet ./...` must pass; `gofmt -l .` must
+  be empty. New code ships with tests through the module's interface.
 - Error responses must match the spec code table (`internal/apperr`); tests
-  in `internal/httpapi/handler_test.go` assert `apperr.Code` values.
-- Load test is opt-in: `go test -run TestHTTPLoad -load ./internal/httpapi`.
+  in `internal/httpapi` assert `apperr.Code` values through `Service.Serve`
+  and both adapters (`adapters_test.go`).
+- Capture logs in tests with `observability.WithLogger(ctx, logger)`, not
+  `slog.SetDefault`.
+- Load test is opt-in: `go test ./internal/httpapi -run TestHTTPLoad -v -args -load`.
 - Commits/push/issues only when the user asks (spec §10).
 - GitHub Issues for `princeflaco/golang-policy-inference-case` are the
   tracker; see `.devin/docs/agents/issue-tracker.md` before touching them.

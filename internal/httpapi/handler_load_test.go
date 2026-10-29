@@ -19,7 +19,7 @@ import (
 )
 
 // load gates the ~70-second HTTP measurement behind an explicit opt-in:
-// `go test -run TestHTTPLoad -load ./internal/httpapi` (see `make load-test`).
+// `go test ./internal/httpapi -run TestHTTPLoad -v -args -load` (see `make load-test`).
 var load = flag.Bool("load", false, "run the HTTP load measurement")
 
 const loadPolicyDOT = `digraph P {

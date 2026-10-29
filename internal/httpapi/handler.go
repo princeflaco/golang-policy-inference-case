@@ -9,26 +9,25 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/princeflaco/golang-policy-inference-case/internal/config"
 	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
 	"github.com/princeflaco/golang-policy-inference-case/internal/policy"
 )
 
 const (
-	defaultMaxBodyBytes = 1048576
-	codeInvalidJSON     = "invalid_json"
-	codeInvalidInput    = "invalid_input"
-	codeInvalidPolicy   = "invalid_policy"
-	codeInferenceError  = "inference_error"
-	codeTooLarge        = "request_too_large"
-	codeMethod          = "method_not_allowed"
-	codeNotFound        = "not_found"
-	codeInternal        = "internal_error"
+	codeInvalidJSON    = "invalid_json"
+	codeInvalidInput   = "invalid_input"
+	codeInvalidPolicy  = "invalid_policy"
+	codeInferenceError = "inference_error"
+	codeTooLarge       = "request_too_large"
+	codeMethod         = "method_not_allowed"
+	codeNotFound       = "not_found"
+	codeInternal       = "internal_error"
 )
 
 var inputIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -49,6 +48,12 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 		return response, nil
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		observability.Logger(ctx).Error("invalid configuration", "error", err)
+		return respond(errorResponse(500, codeInternal, "invalid configuration"), codeInternal)
+	}
+
 	if request.RequestContext.HTTP.Method != "POST" {
 		return respond(errorResponse(405, codeMethod, "method must be POST"), codeMethod)
 	}
@@ -67,7 +72,7 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 	if err != nil {
 		return respond(errorResponse(400, codeInvalidJSON, err.Error()), codeInvalidJSON)
 	}
-	if len(body) > maxBodyBytes() {
+	if len(body) > cfg.MaxBodyBytes {
 		return respond(errorResponse(413, codeTooLarge, "request body exceeds the configured limit"), codeTooLarge)
 	}
 
@@ -77,7 +82,7 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 	}
 
 	parseCtx, parseSpan := observability.StartSpan(ctx, "policy.parse")
-	parsed, err := policy.Parse(policyDOT)
+	parsed, err := policy.Parse(policyDOT, policy.WithLimits(cfg.Limits()))
 	parseSpan.End(parseCtx)
 	if err != nil {
 		return respond(errorResponse(400, codeInvalidPolicy, publicMessage(err)), codeInvalidPolicy)
@@ -275,14 +280,6 @@ func publicMessage(err error) string {
 		return policyErr.Message
 	}
 	return codeInternal
-}
-
-func maxBodyBytes() int {
-	value, err := strconv.Atoi(os.Getenv("MAX_BODY_BYTES"))
-	if err != nil || value <= 0 {
-		return defaultMaxBodyBytes
-	}
-	return value
 }
 
 func errorResponse(status int, code, message string) events.APIGatewayV2HTTPResponse {

@@ -59,3 +59,7 @@ perf-container:
 	sleep 2
 	docker run --rm -i --add-host=host.docker.internal:host-gateway 		-e BASE_URL=http://host.docker.internal:8080 		grafana/k6 run - < tools/perf/k6.js
 	-docker rm -f perf-app
+
+# Plain HTTP server mode (uses .env / env vars via viper).
+run:
+	HTTP_ADDR=:8080 $(GO) run ./cmd/infer

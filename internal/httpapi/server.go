@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/princeflaco/golang-policy-inference-case/internal/config"
+
 	"github.com/aws/aws-lambda-go/events"
 )
 
@@ -14,7 +16,7 @@ import (
 // execution is unaffected.
 func HTTPHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(maxBodyBytes())))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(maxBody())))
 		if err != nil {
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
@@ -40,4 +42,12 @@ func HTTPHandler() http.HandlerFunc {
 		w.WriteHeader(response.StatusCode)
 		_, _ = w.Write([]byte(response.Body))
 	}
+}
+
+func maxBody() int {
+	cfg, err := config.Load()
+	if err != nil {
+		return 1048576
+	}
+	return cfg.MaxBodyBytes
 }

@@ -16,11 +16,16 @@ import (
 	"time"
 
 	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
+	"github.com/princeflaco/golang-policy-inference-case/internal/policy/policytest"
 )
 
 // load gates the ~70-second HTTP measurement behind an explicit opt-in:
 // `go test ./internal/httpapi -run TestHTTPLoad -v -args -load` (see `make load-test`).
-var load = flag.Bool("load", false, "run the HTTP load measurement")
+// -load-shape selects which policy shapes to measure: all, medium, complex.
+var (
+	load      = flag.Bool("load", false, "run the HTTP load measurement")
+	loadShape = flag.String("load-shape", "all", "policy shapes to measure: all, medium, complex")
+)
 
 const loadPolicyDOT = `digraph P {
 	start [result="tier=base"]
@@ -42,12 +47,12 @@ type loadResult struct {
 	status  int
 }
 
-func TestHTTPLoadMediumPolicy(t *testing.T) {
-	if !*load {
-		t.Skip("pass -load to run the 70-second HTTP load measurement")
-	}
-
-	payload, err := json.Marshal(map[string]any{
+// loadPayloads are the request bodies measured by the load phases. medium is
+// the hand-written policy used since the first report; complex is a wide
+// layered DAG (37 nodes, 186 edges, ~6 KB body) where Parse does most of the
+// per-request work.
+var loadPayloads = map[string]map[string]any{
+	"medium": {
 		"policy_dot": loadPolicyDOT,
 		"input": map[string]any{
 			"age":     20,
@@ -55,9 +60,16 @@ func TestHTTPLoadMediumPolicy(t *testing.T) {
 			"segment": "prime",
 			"active":  true,
 		},
-	})
-	if err != nil {
-		t.Fatal(err)
+	},
+	"complex": func() map[string]any {
+		shape := policytest.Layered(6, 6)
+		return map[string]any{"policy_dot": shape.DOT, "input": shape.Input}
+	}(),
+}
+
+func TestHTTPLoad(t *testing.T) {
+	if !*load {
+		t.Skip("pass -load to run the 70-second HTTP load measurement")
 	}
 
 	// The measurement drives the production net/http adapter; logs are
@@ -68,6 +80,24 @@ func TestHTTPLoadMediumPolicy(t *testing.T) {
 	}
 	server.Start()
 	defer server.Close()
+
+	for _, name := range []string{"medium", "complex"} {
+		if *loadShape != "all" && *loadShape != name {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			measureLoad(t, server, loadPayloads[name])
+		})
+	}
+}
+
+func measureLoad(t *testing.T, server *httptest.Server, body map[string]any) {
+	t.Helper()
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,

@@ -1,6 +1,10 @@
 package policy
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/princeflaco/golang-policy-inference-case/internal/policy/policytest"
+)
 
 const mediumPolicyDOT = `digraph P {
 	start [result="tier=base"]
@@ -69,5 +73,75 @@ func BenchmarkParseAndInferMediumPolicy(b *testing.B) {
 		}
 		benchmarkPolicy = parsed
 		benchmarkOutput = output
+	}
+}
+
+// benchmarkShapes covers the policy shapes a real workload can throw at the
+// engine: deep paths, wide condition fan-out, long boolean expressions and
+// wide DAGs where Parse dominates. medium is repeated here so the shape
+// table alone tells the whole story.
+var benchmarkShapes = []struct {
+	name  string
+	shape policytest.Shape
+}{
+	{"medium", policytest.Shape{DOT: mediumPolicyDOT, Input: mediumPolicyInput}},
+	{"chain-100", policytest.Chain(100)},
+	{"fanout-50", policytest.Fanout(50)},
+	{"wide-condition-50", policytest.WideCondition(50)},
+	{"layered-6x6", policytest.Layered(6, 6)},
+	{"layered-9x9", policytest.Layered(9, 9)},
+}
+
+func BenchmarkParseShapes(b *testing.B) {
+	for _, shape := range benchmarkShapes {
+		b.Run(shape.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				parsed, err := parse(shape.shape.DOT)
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkPolicy = parsed
+			}
+		})
+	}
+}
+
+func BenchmarkInferShapes(b *testing.B) {
+	for _, shape := range benchmarkShapes {
+		parsed, err := parse(shape.shape.DOT)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(shape.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				output, err := parsed.Infer(shape.shape.Input)
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkOutput = output
+			}
+		})
+	}
+}
+
+func BenchmarkParseAndInferShapes(b *testing.B) {
+	for _, shape := range benchmarkShapes {
+		b.Run(shape.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				parsed, err := parse(shape.shape.DOT)
+				if err != nil {
+					b.Fatal(err)
+				}
+				output, err := parsed.Infer(shape.shape.Input)
+				if err != nil {
+					b.Fatal(err)
+				}
+				benchmarkPolicy = parsed
+				benchmarkOutput = output
+			}
+		})
 	}
 }

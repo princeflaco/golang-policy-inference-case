@@ -16,6 +16,7 @@ make swagger      # regenerate docs/swagger after touching contract or annotatio
 make bench        # engine micro-benchmarks
 make load-test    # 50 RPS / 60s per policy shape via httptest (flag-gated, ~140s for medium + complex)
 make sam-local    # SAM emulation (always --warm-containers EAGER)
+make cold-start   # cold-start evidence: COLD_START_N invokes, fresh container each (needs sam + docker)
 ```
 
 `make run`/`debug`/`load-test` use Go flags, not `VAR=x cmd` env prefixes —

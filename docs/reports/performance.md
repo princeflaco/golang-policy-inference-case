@@ -35,6 +35,9 @@ go test -run '^$' -bench . -benchmem -count=3 ./internal/policy
 # Carga HTTP: 50 RPS ofertados, 10 s de aquecimento + 60 s de medição por forma
 go test ./internal/httpapi -run TestHTTPLoad -v -args -load                 # ou: make load-test (todas as formas)
 go test ./internal/httpapi -run TestHTTPLoad -v -args -load -load-shape=complex   # só a forma complexa
+
+# Cold start: N invocações, cada uma em container novo (sam local invoke)
+make cold-start                    # ou: SAM=<sam.cmd> sh tools/perf/cold-start.sh 10
 ```
 
 ## Resultados — benchmarks do motor (3 execuções)
@@ -105,9 +108,10 @@ agendamento do Windows — não um padrão da carga.
 
 ## Ressalvas
 
-- **Não é performance de Lambda.** Os números excluem cold start de container,
-  init do runtime Lambda e saltos do API Gateway. A tentativa anterior de
-  medir através do `sam local start-api` produziu dados inválidos: o modo
+- **Não é performance de Lambda.** As medições HTTP excluem cold start e
+  saltos do API Gateway — cold start é medido separadamente na seção
+  `sam local invoke` abaixo. A tentativa anterior de medir *carga* através
+  do `sam local start-api` produziu dados inválidos: o modo
   padrão cria um container `rapid-x86_64` por invocação e saturou o daemon
   Docker local (~1 900 containers, timeouts/502). Qualquer medição futura via
   SAM deve usar `sam local start-api --warm-containers EAGER` (`make sam-local`).
@@ -135,3 +139,33 @@ multiplica a mediana por ~1,4 — coerente com o `Parse` por requisição medido
 nos benchmarks. É a medição neutra mais próxima disponível localmente:
 container Linux, processo isolado, ferramenta de carga externa — ainda
 excluindo cold start de Lambda e saltos do API Gateway.
+
+## Resultados — cold start (`sam local invoke`)
+
+Cada `sam local invoke` cria um container `rapid-x86_64` novo, então toda
+invocação é um cold start por construção. 10 invocações da política média
+(`tools/perf/event-medium.json`, API Gateway v2) sobre a imagem SAM, que usa
+a base real `public.ecr.aws/lambda/provided:al2023` com o mesmo binário.
+Reproduzir com `make cold-start` (`COLD_START_N` ajusta a amostra).
+
+| Métrica | min | mediana | média | máx |
+| --- | ---: | ---: | ---: | ---: |
+| `Init Duration` (REPORT) | 0,06 ms | 0,09 ms | 0,10 ms | 0,18 ms |
+| `Duration` (REPORT) | 5,28 ms | 5,87 ms | 6,14 ms | 7,95 ms |
+| wall time por invoke | 8 713 ms | 8 841 ms | 8 946 ms | 9 810 ms |
+
+Leitura:
+
+- **`Init Duration` ~0,1 ms**: o init do binário Go estático é essencialmente
+  nulo — sem interpretador nem JIT para aquecer. Este número é
+  representativo: a imagem usa a base real do Lambda com o mesmo binário.
+- **`Duration` ~6 ms contra ~1 ms de trabalho no handler** (visível no log
+  `request completed duration_ms=1.123`): em uma invocação fria o custo
+  dominante é o bootstrap do runtime (loop do Runtime API), não a política.
+- **wall ~9 s** é orquestração local — SAM CLI + `docker run` + create +
+  teardown. Não tem equivalente na AWS e não deve ser lido como latência de
+  cold start real.
+- Ressalva de sempre: Firecracker/microVMs da AWS têm outro caminho de
+  provisionamento. Os números acima limitam a *magnitude* do init, não o
+  cold start real em produção — para esse número só publicando e medindo na
+  conta AWS de verdade.

@@ -111,6 +111,7 @@ Resumo do [relatório completo](docs/reports/performance.md) (metodologia, ambie
 go test -run '^$' -bench . -benchmem -count=3 ./internal/policy   # benchmarks do motor, por forma de política
 make load-test                                                  # 50 RPS via httptest — formas medium + complex (~140 s)
 make perf-container                                             # k6 em container separado, ambas as formas
+make cold-start                                                 # cold start via sam local invoke (container novo por invocação)
 ```
 
 São medições locais: não incluem cold start de Lambda nem API Gateway. Para emular via SAM, use `make sam-local`.
@@ -135,6 +136,6 @@ O contrato `POST /infer` é gerado das anotações `swag` em `internal/httpapi/h
 
 ## Ferramentas e teste manual
 
-- **Makefile**: `make help` lista os alvos — `fmt`, `test`, `test-race`, `vet`, `cover`, `check`, `build`, `build-lambda`, `bench`, `load-test`, `perf-container`, `run`, `debug`, `swagger`, `install-hooks`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
+- **Makefile**: `make help` lista os alvos — `fmt`, `test`, `test-race`, `vet`, `cover`, `check`, `build`, `build-lambda`, `bench`, `load-test`, `perf-container`, `cold-start`, `run`, `debug`, `swagger`, `install-hooks`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
 - `tools/api/policy-inference.http` — requests prontos para VS Code (extensão REST Client) ou Rider/IntelliJ; ajuste a variável `@host`.
 - `tools/api/policy-inference.postman_collection.json` — collection Postman/Insomnia com happy paths, casos de erro e testes automáticos de status/código/correlation id.

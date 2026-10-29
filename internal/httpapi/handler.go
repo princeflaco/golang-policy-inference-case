@@ -101,17 +101,17 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 		return fail(ctx, err)
 	}
 
-	parseCtx, parseSpan := observability.StartSpan(ctx, "policy.parse")
+	_, parseSpan := observability.StartSpan(ctx, "policy.parse")
 	parsed, err := policy.Parse(policyDOT, cfg.Limits())
-	parseSpan.End(parseCtx)
+	parseSpan.End()
 	if err != nil {
 		return fail(ctx, err)
 	}
 	observability.Logger(ctx).Info("policy parsed", "nodes", parsed.NodeCount(), "edges", parsed.EdgeCount())
 
-	inferCtx, inferSpan := observability.StartSpan(ctx, "policy.infer")
+	_, inferSpan := observability.StartSpan(ctx, "policy.infer")
 	output, err := parsed.Infer(input)
-	inferSpan.End(inferCtx)
+	inferSpan.End()
 	if err != nil {
 		return fail(ctx, err)
 	}

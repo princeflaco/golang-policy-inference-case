@@ -20,6 +20,7 @@ type contextKey string
 const (
 	correlationKey contextKey = "correlation-id"
 	spanKey        contextKey = "span"
+	loggerKey      contextKey = "logger"
 )
 
 // WithCorrelationID stores the request correlation id on the context.
@@ -35,6 +36,13 @@ func CorrelationID(ctx context.Context) string {
 	return ""
 }
 
+// WithLogger sets the base logger for everything downstream of ctx. Without
+// it, Logger falls back to slog.Default, so production code never needs to
+// call it; tests use it to capture logs without touching global state.
+func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
+	return context.WithValue(ctx, loggerKey, logger)
+}
+
 // NewID returns a random 32-hex-character identifier suitable for
 // correlation and span ids.
 func NewID() string {
@@ -43,49 +51,55 @@ func NewID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Logger returns the default logger enriched with the correlation id and the
-// current span id, so every downstream log line joins the trace.
+// Logger returns the context's base logger enriched with the correlation id
+// and the current span id, so every downstream log line joins the trace.
 func Logger(ctx context.Context) *slog.Logger {
-	logger := slog.Default()
+	logger, ok := ctx.Value(loggerKey).(*slog.Logger)
+	if !ok {
+		logger = slog.Default()
+	}
 	if id := CorrelationID(ctx); id != "" {
 		logger = logger.With("correlation_id", id)
 	}
-	if span := SpanFrom(ctx); span != nil {
+	if span := spanFrom(ctx); span != nil {
 		logger = logger.With("span_id", span.id)
 	}
 	return logger
 }
 
-// Span is a timed unit of work emitted as a structured log event.
+// Span is a timed unit of work emitted as a structured log event when it
+// ends.
 type Span struct {
 	name     string
 	id       string
 	parentID string
 	started  time.Time
+	logger   *slog.Logger
 }
 
 // StartSpan opens a named span. The returned context carries the span so that
 // nested spans become its children and Logger picks up the span id.
 func StartSpan(ctx context.Context, name string) (context.Context, *Span) {
 	span := &Span{name: name, id: NewID(), started: time.Now()}
-	if parent := SpanFrom(ctx); parent != nil {
+	if parent := spanFrom(ctx); parent != nil {
 		span.parentID = parent.id
 	}
-	return context.WithValue(ctx, spanKey, span), span
+	ctx = context.WithValue(ctx, spanKey, span)
+	span.logger = Logger(ctx)
+	return ctx, span
 }
 
-// SpanFrom returns the active span on the context, if any.
-func SpanFrom(ctx context.Context) *Span {
+func spanFrom(ctx context.Context) *Span {
 	span, _ := ctx.Value(spanKey).(*Span)
 	return span
 }
 
 // End emits the span completion event with its duration.
-func (s *Span) End(ctx context.Context) {
-	Logger(ctx).Info("span",
-		"span", s.name,
-		"span_id", s.id,
-		"parent_span_id", s.parentID,
-		"duration_ms", float64(time.Since(s.started).Microseconds())/1000,
-	)
+func (s *Span) End() {
+	attrs := []any{"span", s.name}
+	if s.parentID != "" {
+		attrs = append(attrs, "parent_span_id", s.parentID)
+	}
+	attrs = append(attrs, "duration_ms", float64(time.Since(s.started).Microseconds())/1000)
+	s.logger.Info("span", attrs...)
 }

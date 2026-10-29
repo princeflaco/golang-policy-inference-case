@@ -62,12 +62,12 @@ type edge struct {
 	expr ast.Expr
 }
 
-// Parse converts the approved subset of DOT into an executable policy.
-// Limits default to LimitsFromEnv and may be overridden with Options.
-func Parse(dot string, opts ...Option) (*Policy, error) {
-	limits := LimitsFromEnv()
-	for _, opt := range opts {
-		opt(&limits)
+// Parse converts the approved subset of DOT into an executable policy,
+// rejecting it with apperr.InvalidPolicy when it exceeds limits. Invalid
+// limits are a programming error and yield an uncoded error.
+func Parse(dot string, limits Limits) (*Policy, error) {
+	if err := limits.Validate(); err != nil {
+		return nil, err
 	}
 
 	file, err := godot.ParseString(dot)

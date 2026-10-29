@@ -32,7 +32,7 @@ var mediumPolicyInput = map[string]any{
 func BenchmarkParseMediumPolicy(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		parsed, err := Parse(mediumPolicyDOT)
+		parsed, err := parse(mediumPolicyDOT)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -41,7 +41,7 @@ func BenchmarkParseMediumPolicy(b *testing.B) {
 }
 
 func BenchmarkInferMediumPolicy(b *testing.B) {
-	parsed, err := Parse(mediumPolicyDOT)
+	parsed, err := parse(mediumPolicyDOT)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func BenchmarkInferMediumPolicy(b *testing.B) {
 func BenchmarkParseAndInferMediumPolicy(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		parsed, err := Parse(mediumPolicyDOT)
+		parsed, err := parse(mediumPolicyDOT)
 		if err != nil {
 			b.Fatal(err)
 		}

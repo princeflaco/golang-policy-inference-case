@@ -87,6 +87,9 @@ func Load() (*Config, error) {
 	if cfg.MaxBodyBytes <= 0 {
 		return nil, errors.New("MAX_BODY_BYTES must be positive")
 	}
+	if err := cfg.Limits().Validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 

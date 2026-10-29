@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
 	"reflect"
 	"strconv"
 	"testing"
@@ -16,7 +17,7 @@ const twoOutcomePolicy = `digraph Policy {
 }`
 
 func TestInferApprovesAndRejects(t *testing.T) {
-	p, err := Parse(twoOutcomePolicy)
+	p, err := parse(twoOutcomePolicy)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
@@ -43,7 +44,7 @@ func TestInferApprovesAndRejects(t *testing.T) {
 }
 
 func TestInferUsesDeclarationOrderWhenBothConditionsAreTrue(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start
 		first [result="choice=true"]
 		second [result="choice=false"]
@@ -71,14 +72,14 @@ func TestParseRejectsInvalidSubset(t *testing.T) {
 		`digraph P { start -> ok [cond="age>=18"] start -> ok [cond="age>0"] }`,
 	}
 	for _, dot := range tests {
-		if _, err := Parse(dot); err == nil {
+		if _, err := parse(dot); err == nil {
 			t.Fatalf("Parse(%q) unexpectedly succeeded", dot)
 		}
 	}
 }
 
 func TestInferSupportsStringBooleanAndNumberValues(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="segment=prime,score=720,active=true"]
 		prime [result="approved=true"]
 		other [result="approved=false"]
@@ -102,7 +103,7 @@ func TestInferSupportsStringBooleanAndNumberValues(t *testing.T) {
 }
 
 func TestInferUsesInputStringsAndBooleans(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start
 		prime [result="approved=true"]
 		other [result="approved=false"]
@@ -122,7 +123,7 @@ func TestInferUsesInputStringsAndBooleans(t *testing.T) {
 }
 
 func TestResultParsesQuotedStrings(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="empty=\"\",manual=\"prime,manual\",escaped=\"a\\\"b\""]
 	}`)
 	if err != nil {
@@ -166,7 +167,7 @@ func TestTypeMismatchesReturnInferenceError(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dot := `digraph P { start -> ok [cond=` + strconv.Quote(test.cond) + `] ok [result="approved=true"] }`
-			p, err := Parse(dot)
+			p, err := parse(dot)
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
 			}
@@ -178,7 +179,7 @@ func TestTypeMismatchesReturnInferenceError(t *testing.T) {
 }
 
 func TestInferAppliesAssignmentsAcrossIntermediateNodes(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="age=17"]
 		check [result="age=20"]
 		approved [result="approved=true"]
@@ -201,7 +202,7 @@ func TestInferAppliesAssignmentsAcrossIntermediateNodes(t *testing.T) {
 }
 
 func TestInferSupportsTypeOverwriteBetweenNodes(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="level=1"]
 		upgrade [result="level=\"prime\""]
 		done [result="approved=true"]
@@ -221,7 +222,7 @@ func TestInferSupportsTypeOverwriteBetweenNodes(t *testing.T) {
 }
 
 func TestInferStopsWhenNoOutgoingConditionIsTrue(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="approved=true"]
 		ok [result="reached=true"]
 		start -> ok [cond="age>=18"]
@@ -240,7 +241,7 @@ func TestInferStopsWhenNoOutgoingConditionIsTrue(t *testing.T) {
 }
 
 func TestInferDoesNotShareStateBetweenCalls(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start [result="visits=1"]
 		next [result="visits=2"]
 		start -> next [cond="visits==1"]
@@ -264,7 +265,7 @@ func TestInferDoesNotShareStateBetweenCalls(t *testing.T) {
 }
 
 func TestInferSupportsCompoundConditionsAndPrecedence(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start
 		approved [result="approved=true"]
 		review [result="approved=false,status=\"review\""]
@@ -286,7 +287,7 @@ func TestInferSupportsCompoundConditionsAndPrecedence(t *testing.T) {
 }
 
 func TestAndShortCircuitsMissingVariable(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start -> ok [cond="age>18 && score>700"]
 		ok [result="approved=true"]
 	}`)
@@ -303,7 +304,7 @@ func TestAndShortCircuitsMissingVariable(t *testing.T) {
 }
 
 func TestOrShortCircuitsMissingVariable(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start -> ok [cond="age>=18 || score>700"]
 		ok [result="approved=true"]
 	}`)
@@ -320,7 +321,7 @@ func TestOrShortCircuitsMissingVariable(t *testing.T) {
 }
 
 func TestCompoundConditionAccessedMissingVariableErrors(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start -> ok [cond="age>=18 && score>700"]
 		ok [result="approved=true"]
 	}`)
@@ -333,7 +334,7 @@ func TestCompoundConditionAccessedMissingVariableErrors(t *testing.T) {
 }
 
 func TestCompoundConditionPreservesLeftError(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start -> ok [cond="score>700 || age>=18"]
 		ok [result="approved=true"]
 	}`)
@@ -346,7 +347,7 @@ func TestCompoundConditionPreservesLeftError(t *testing.T) {
 }
 
 func TestCompoundConditionParenthesesChangeGrouping(t *testing.T) {
-	p, err := Parse(`digraph P {
+	p, err := parse(`digraph P {
 		start
 		ok [result="approved=true"]
 		no [result="approved=false"]
@@ -366,13 +367,13 @@ func TestCompoundConditionParenthesesChangeGrouping(t *testing.T) {
 }
 
 func TestParseValidatesUnreachablePolicySections(t *testing.T) {
-	_, err := Parse(`digraph P {
+	_, err := parse(`digraph P {
 		start -> ok [cond="age>=18"]
 		ok [result="approved=true"]
 		unreachable -> bad [cond="age+1>18"]
 	}`)
 	if err == nil {
-		t.Fatal("Parse() unexpectedly accepted an invalid condition on an unreachable edge")
+		t.Fatal("parse() unexpectedly accepted an invalid condition on an unreachable edge")
 	}
 }
 
@@ -389,7 +390,7 @@ func TestParseRejectsProhibitedConditionForms(t *testing.T) {
 	for _, condition := range tests {
 		t.Run(condition, func(t *testing.T) {
 			dot := `digraph P { start -> ok [cond=` + strconv.Quote(condition) + `] ok [result="approved=true"] }`
-			if _, err := Parse(dot); err == nil {
+			if _, err := parse(dot); err == nil {
 				t.Fatalf("Parse(%q) unexpectedly succeeded", condition)
 			}
 		})
@@ -409,7 +410,7 @@ func TestParseRejectsProhibitedDOTForms(t *testing.T) {
 		`digraph P { start -> ok [cond="age>=18",cond="age<18"] }`,
 	}
 	for _, dot := range tests {
-		if _, err := Parse(dot); err == nil {
+		if _, err := parse(dot); err == nil {
 			t.Fatalf("Parse(%q) unexpectedly succeeded", dot)
 		}
 	}
@@ -430,7 +431,7 @@ func TestParseRejectsInvalidAssignments(t *testing.T) {
 	for _, result := range tests {
 		t.Run(result, func(t *testing.T) {
 			dot := `digraph P { start [result=` + strconv.Quote(result) + `] }`
-			if _, err := Parse(dot); err == nil {
+			if _, err := parse(dot); err == nil {
 				t.Fatalf("Parse(%q) unexpectedly succeeded", result)
 			}
 		})
@@ -438,53 +439,40 @@ func TestParseRejectsInvalidAssignments(t *testing.T) {
 }
 
 func TestPolicyLimits(t *testing.T) {
-	t.Run("nodes", func(t *testing.T) {
-		dot := `digraph P { start -> a [cond="true"] a -> b [cond="true"] }`
-		t.Setenv("MAX_POLICY_NODES", "3")
-		if _, err := Parse(dot); err != nil {
-			t.Fatalf("Parse() at limit error = %v", err)
-		}
-		t.Setenv("MAX_POLICY_NODES", "2")
-		if _, err := Parse(dot); err == nil {
-			t.Fatal("Parse() above node limit unexpectedly succeeded")
-		}
-	})
+	tests := []struct {
+		name   string
+		dot    string
+		atMost func(*Limits, int)
+		limit  int
+	}{
+		{"nodes", `digraph P { start -> a [cond="true"] a -> b [cond="true"] }`, func(l *Limits, n int) { l.MaxPolicyNodes = n }, 3},
+		{"edges", `digraph P { start -> a [cond="true"] start -> b [cond="false"] }`, func(l *Limits, n int) { l.MaxPolicyEdges = n }, 2},
+		{"condition bytes", `digraph P { start -> ok [cond="age>=18"] }`, func(l *Limits, n int) { l.MaxConditionBytes = n }, 7},
+		{"expression depth", `digraph P { start -> ok [cond="age>=18 && score>700 && active"] }`, func(l *Limits, n int) { l.MaxExpressionDepth = n }, 4},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			limits := DefaultLimits()
+			test.atMost(&limits, test.limit)
+			if _, err := Parse(test.dot, limits); err != nil {
+				t.Fatalf("Parse() at limit error = %v", err)
+			}
+			test.atMost(&limits, test.limit-1)
+			_, err := Parse(test.dot, limits)
+			if apiErr := apperr.From(err); apiErr == nil || apiErr.Code != apperr.InvalidPolicy {
+				t.Fatalf("Parse() above limit error = %v, want invalid_policy", err)
+			}
+		})
+	}
+}
 
-	t.Run("edges", func(t *testing.T) {
-		dot := `digraph P { start -> a [cond="true"] start -> b [cond="false"] }`
-		t.Setenv("MAX_POLICY_EDGES", "2")
-		if _, err := Parse(dot); err != nil {
-			t.Fatalf("Parse() at limit error = %v", err)
-		}
-		t.Setenv("MAX_POLICY_EDGES", "1")
-		if _, err := Parse(dot); err == nil {
-			t.Fatal("Parse() above edge limit unexpectedly succeeded")
-		}
-	})
-
-	t.Run("condition bytes", func(t *testing.T) {
-		dot := `digraph P { start -> ok [cond="age>=18"] }`
-		t.Setenv("MAX_CONDITION_BYTES", "7")
-		if _, err := Parse(dot); err != nil {
-			t.Fatalf("Parse() at limit error = %v", err)
-		}
-		t.Setenv("MAX_CONDITION_BYTES", "6")
-		if _, err := Parse(dot); err == nil {
-			t.Fatal("Parse() above condition limit unexpectedly succeeded")
-		}
-	})
-
-	t.Run("expression depth", func(t *testing.T) {
-		dot := `digraph P { start -> ok [cond="age>=18 && score>700 && active"] }`
-		t.Setenv("MAX_EXPRESSION_DEPTH", "4")
-		if _, err := Parse(dot); err != nil {
-			t.Fatalf("Parse() at limit error = %v", err)
-		}
-		t.Setenv("MAX_EXPRESSION_DEPTH", "3")
-		if _, err := Parse(dot); err == nil {
-			t.Fatal("Parse() above depth limit unexpectedly succeeded")
-		}
-	})
+func TestParseRejectsNonPositiveLimits(t *testing.T) {
+	limits := DefaultLimits()
+	limits.MaxPolicyEdges = 0
+	_, err := Parse(`digraph P { start }`, limits)
+	if err == nil || apperr.From(err) != nil {
+		t.Fatalf("Parse() error = %v, want an uncoded programming error", err)
+	}
 }
 
 func TestParseRejectsTopLevelAttrAndUnsupportedDotEscape(t *testing.T) {
@@ -493,8 +481,8 @@ func TestParseRejectsTopLevelAttrAndUnsupportedDotEscape(t *testing.T) {
 		"bad escape":     "digraph { start -> ok [cond=\"true\"] ok [result=\"a\rb\"] }",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Parse(dot); err == nil {
-				t.Fatal("Parse() expected error")
+			if _, err := parse(dot); err == nil {
+				t.Fatal("parse() expected error")
 			}
 		})
 	}
@@ -518,20 +506,6 @@ func TestParseResultAcceptsDigitLeadingSimpleStrings(t *testing.T) {
 	}
 }
 
-func TestParseWithLimitsOption(t *testing.T) {
-	dot := `digraph P {
-		start [result=""]
-		a [result="ok=true"]
-		b [result="ok=false"]
-		start -> a [cond="1==1"]
-		a -> b [cond="1==1"]
-	}`
-	permissive := Limits{MaxPolicyNodes: 10, MaxPolicyEdges: 10, MaxConditionBytes: 10, MaxExpressionDepth: 10}
-	if _, err := Parse(dot, WithLimits(permissive)); err != nil {
-		t.Fatalf("Parse() with permissive limits error = %v", err)
-	}
-	strict := Limits{MaxPolicyNodes: 2, MaxPolicyEdges: 10, MaxConditionBytes: 10, MaxExpressionDepth: 10}
-	if _, err := Parse(dot, WithLimits(strict)); err == nil {
-		t.Fatal("Parse() with MaxPolicyNodes=2 unexpectedly succeeded")
-	}
+func parse(dot string) (*Policy, error) {
+	return Parse(dot, DefaultLimits())
 }

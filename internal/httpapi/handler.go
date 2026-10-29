@@ -108,7 +108,7 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 	}
 
 	parseCtx, parseSpan := observability.StartSpan(ctx, "policy.parse")
-	parsed, err := policy.Parse(policyDOT, policy.WithLimits(cfg.Limits()))
+	parsed, err := policy.Parse(policyDOT, cfg.Limits())
 	parseSpan.End(parseCtx)
 	if err != nil {
 		return fail(ctx, err)

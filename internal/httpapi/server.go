@@ -47,7 +47,7 @@ func HTTPHandler() http.HandlerFunc {
 func maxBody() int {
 	cfg, err := config.Load()
 	if err != nil {
-		return 1048576
+		return config.DefaultMaxBodyBytes
 	}
 	return cfg.MaxBodyBytes
 }

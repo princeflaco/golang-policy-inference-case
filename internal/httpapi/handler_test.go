@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
 )
 
 const testPolicy = `digraph Policy {
@@ -60,12 +61,12 @@ func TestHandleRejectsDuplicateJSONKeys(t *testing.T) {
 	if response.StatusCode != 400 {
 		t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 	}
-	var body errorBody
+	var body apperr.Error
 	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if body.Code != codeInvalidJSON {
-		t.Fatalf("code = %q, want %q", body.Code, codeInvalidJSON)
+	if body.Code != apperr.InvalidJSON {
+		t.Fatalf("code = %q, want %q", body.Code, apperr.InvalidJSON)
 	}
 }
 
@@ -78,12 +79,12 @@ func TestHandleRejectsUnsupportedPolicyFeature(t *testing.T) {
 	if response.StatusCode != 400 {
 		t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 	}
-	var body errorBody
+	var body apperr.Error
 	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if body.Code != codeInvalidPolicy {
-		t.Fatalf("code = %q, want %q", body.Code, codeInvalidPolicy)
+	if body.Code != apperr.InvalidPolicy {
+		t.Fatalf("code = %q, want %q", body.Code, apperr.InvalidPolicy)
 	}
 }
 
@@ -120,12 +121,12 @@ func TestHandleRejectsNullInput(t *testing.T) {
 	if response.StatusCode != 400 {
 		t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 	}
-	var body errorBody
+	var body apperr.Error
 	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if body.Code != codeInvalidInput {
-		t.Fatalf("code = %q, want %q", body.Code, codeInvalidInput)
+	if body.Code != apperr.InvalidInput {
+		t.Fatalf("code = %q, want %q", body.Code, apperr.InvalidInput)
 	}
 }
 
@@ -175,12 +176,12 @@ func TestHandleReturnsInferenceErrorForTypeMismatch(t *testing.T) {
 	if response.StatusCode != 400 {
 		t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 	}
-	var body errorBody
+	var body apperr.Error
 	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if body.Code != codeInferenceError {
-		t.Fatalf("code = %q, want %q", body.Code, codeInferenceError)
+	if body.Code != apperr.InferenceError {
+		t.Fatalf("code = %q, want %q", body.Code, apperr.InferenceError)
 	}
 }
 
@@ -259,15 +260,15 @@ func TestHandleRejectsHTTPContractViolations(t *testing.T) {
 		contentTyp string
 		body       string
 		status     int
-		code       string
+		code       apperr.Code
 	}{
-		{"method", "GET", "/infer", "application/json", validPayload, 405, codeMethod},
-		{"path", "POST", "/other", "application/json", validPayload, 404, codeNotFound},
-		{"content type", "POST", "/infer", "text/plain", validPayload, 400, codeInvalidJSON},
-		{"malformed json", "POST", "/infer", "application/json", `{`, 400, codeInvalidJSON},
-		{"extra field", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{},"extra":true}`, 400, codeInvalidJSON},
-		{"missing input", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `}`, 400, codeInvalidInput},
-		{"policy type", "POST", "/infer", "application/json", `{"policy_dot":123,"input":{}}`, 400, codeInvalidJSON},
+		{"method", "GET", "/infer", "application/json", validPayload, 405, apperr.MethodNotAllowed},
+		{"path", "POST", "/other", "application/json", validPayload, 404, apperr.NotFound},
+		{"content type", "POST", "/infer", "text/plain", validPayload, 400, apperr.InvalidJSON},
+		{"malformed json", "POST", "/infer", "application/json", `{`, 400, apperr.InvalidJSON},
+		{"extra field", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{},"extra":true}`, 400, apperr.InvalidJSON},
+		{"missing input", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `}`, 400, apperr.InvalidInput},
+		{"policy type", "POST", "/infer", "application/json", `{"policy_dot":123,"input":{}}`, 400, apperr.InvalidJSON},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -282,7 +283,7 @@ func TestHandleRejectsHTTPContractViolations(t *testing.T) {
 			if response.StatusCode != test.status {
 				t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 			}
-			var body errorBody
+			var body apperr.Error
 			if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 				t.Fatalf("response is not JSON: %v", err)
 			}
@@ -313,12 +314,12 @@ func TestHandleRejectsUnsupportedInputValues(t *testing.T) {
 		if response.StatusCode != 400 {
 			t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 		}
-		var body errorBody
+		var body apperr.Error
 		if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 			t.Fatalf("response is not JSON: %v", err)
 		}
-		if body.Code != codeInvalidInput {
-			t.Fatalf("code = %q, want %q for input %s", body.Code, codeInvalidInput, inputJSON)
+		if body.Code != apperr.InvalidInput {
+			t.Fatalf("code = %q, want %q for input %s", body.Code, apperr.InvalidInput, inputJSON)
 		}
 	}
 }
@@ -345,12 +346,12 @@ func TestHandleBodySizeLimit(t *testing.T) {
 	if response.StatusCode != 413 {
 		t.Fatalf("StatusCode = %d, body = %s", response.StatusCode, response.Body)
 	}
-	var body errorBody
+	var body apperr.Error
 	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
 	}
-	if body.Code != codeTooLarge {
-		t.Fatalf("code = %q, want %q", body.Code, codeTooLarge)
+	if body.Code != apperr.TooLarge {
+		t.Fatalf("code = %q, want %q", body.Code, apperr.TooLarge)
 	}
 }
 

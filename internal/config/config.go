@@ -14,6 +14,10 @@ import (
 	"github.com/spf13/viper"
 )
 
+// DefaultMaxBodyBytes is the documented request body limit applied when
+// MAX_BODY_BYTES is unset.
+const DefaultMaxBodyBytes = 1048576
+
 // Config holds every runtime setting of the service.
 type Config struct {
 	// HTTPAddr switches the binary into a plain HTTP server when set
@@ -22,6 +26,9 @@ type Config struct {
 
 	// MaxBodyBytes bounds the request body size.
 	MaxBodyBytes int `mapstructure:"MAX_BODY_BYTES"`
+
+	// LogLevel selects the slog level: debug, info, warn, or error.
+	LogLevel string `mapstructure:"LOG_LEVEL"`
 
 	// Policy parse limits; see policy.Limits.
 	MaxPolicyNodes     int `mapstructure:"MAX_POLICY_NODES"`
@@ -53,17 +60,19 @@ func Load() (*Config, error) {
 
 	for _, key := range []string{
 		"HTTP_ADDR", "MAX_BODY_BYTES", "MAX_POLICY_NODES", "MAX_POLICY_EDGES",
-		"MAX_CONDITION_BYTES", "MAX_EXPRESSION_DEPTH",
+		"MAX_CONDITION_BYTES", "MAX_EXPRESSION_DEPTH", "LOG_LEVEL",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, err
 		}
 	}
-	v.SetDefault("MAX_BODY_BYTES", 1048576)
-	v.SetDefault("MAX_POLICY_NODES", 1000)
-	v.SetDefault("MAX_POLICY_EDGES", 5000)
-	v.SetDefault("MAX_CONDITION_BYTES", 4096)
-	v.SetDefault("MAX_EXPRESSION_DEPTH", 64)
+	defaultLimits := policy.DefaultLimits()
+	v.SetDefault("MAX_BODY_BYTES", DefaultMaxBodyBytes)
+	v.SetDefault("LOG_LEVEL", "info")
+	v.SetDefault("MAX_POLICY_NODES", defaultLimits.MaxPolicyNodes)
+	v.SetDefault("MAX_POLICY_EDGES", defaultLimits.MaxPolicyEdges)
+	v.SetDefault("MAX_CONDITION_BYTES", defaultLimits.MaxConditionBytes)
+	v.SetDefault("MAX_EXPRESSION_DEPTH", defaultLimits.MaxExpressionDepth)
 
 	if raw := dotenv(); raw != nil {
 		if err := v.ReadConfig(bytes.NewReader(raw)); err != nil {

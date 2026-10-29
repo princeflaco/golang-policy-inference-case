@@ -21,16 +21,27 @@ type Limits struct {
 	MaxExpressionDepth int
 }
 
+// DefaultLimits returns the documented parse limits, used whenever neither
+// the environment nor an explicit Option overrides them.
+func DefaultLimits() Limits {
+	return Limits{
+		MaxPolicyNodes:     defaultMaxPolicyNodes,
+		MaxPolicyEdges:     defaultMaxPolicyEdges,
+		MaxConditionBytes:  defaultMaxConditionBytes,
+		MaxExpressionDepth: defaultMaxExpressionDepth,
+	}
+}
+
 // LimitsFromEnv resolves the effective limits from the environment, falling
 // back to the documented defaults whenever a variable is unset, malformed,
 // or non-positive.
 func LimitsFromEnv() Limits {
-	return Limits{
-		MaxPolicyNodes:     configuredLimit("MAX_POLICY_NODES", defaultMaxPolicyNodes),
-		MaxPolicyEdges:     configuredLimit("MAX_POLICY_EDGES", defaultMaxPolicyEdges),
-		MaxConditionBytes:  configuredLimit("MAX_CONDITION_BYTES", defaultMaxConditionBytes),
-		MaxExpressionDepth: configuredLimit("MAX_EXPRESSION_DEPTH", defaultMaxExpressionDepth),
-	}
+	limits := DefaultLimits()
+	limits.MaxPolicyNodes = configuredLimit("MAX_POLICY_NODES", limits.MaxPolicyNodes)
+	limits.MaxPolicyEdges = configuredLimit("MAX_POLICY_EDGES", limits.MaxPolicyEdges)
+	limits.MaxConditionBytes = configuredLimit("MAX_CONDITION_BYTES", limits.MaxConditionBytes)
+	limits.MaxExpressionDepth = configuredLimit("MAX_EXPRESSION_DEPTH", limits.MaxExpressionDepth)
+	return limits
 }
 
 // Option configures Parse. Options are applied in order on top of the

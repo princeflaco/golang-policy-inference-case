@@ -9,32 +9,48 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
+	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
 	"github.com/princeflaco/golang-policy-inference-case/internal/config"
 	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
 	"github.com/princeflaco/golang-policy-inference-case/internal/policy"
 )
 
 const (
-	codeInvalidJSON    = "invalid_json"
-	codeInvalidInput   = "invalid_input"
-	codeInvalidPolicy  = "invalid_policy"
-	codeInferenceError = "inference_error"
-	codeTooLarge       = "request_too_large"
-	codeMethod         = "method_not_allowed"
-	codeNotFound       = "not_found"
-	codeInternal       = "internal_error"
+	inferPath         = "/infer"
+	headerContentType = "content-type"
+	jsonMediaType     = "application/json"
+	fieldPolicyDot    = "policy_dot"
+	fieldInput        = "input"
 )
 
-var inputIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// inferRequest documents the POST /infer wire contract for OpenAPI
+// generation; decodeRequest validates the same fields manually so that
+// duplicate keys and unknown fields are rejected.
+type inferRequest struct {
+	PolicyDot string         `json:"policy_dot" example:"digraph P { start [result=\"\"]; ok [result=\"approved=true\"]; start -> ok [cond=\"age>=18\"] }"`
+	Input     map[string]any `json:"input" swaggertype:"object"`
+}
 
-type errorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+// inferResponse is the success envelope of POST /infer.
+type inferResponse struct {
+	Output map[string]any `json:"output" swaggertype:"object"`
+}
+
+// statusByCode is the HTTP mapping of the wire contract's error codes.
+var statusByCode = map[apperr.Code]int{
+	apperr.InvalidJSON:      http.StatusBadRequest,
+	apperr.InvalidInput:     http.StatusBadRequest,
+	apperr.InvalidPolicy:    http.StatusBadRequest,
+	apperr.InferenceError:   http.StatusBadRequest,
+	apperr.TooLarge:         http.StatusRequestEntityTooLarge,
+	apperr.MethodNotAllowed: http.StatusMethodNotAllowed,
+	apperr.NotFound:         http.StatusNotFound,
+	apperr.Internal:         http.StatusInternalServerError,
 }
 
 // Handle is the request pipeline: correlation id, request logging, then the
@@ -43,49 +59,59 @@ var Handle = Chain(core, CorrelationID(), RequestLogging())
 
 // core translates an API Gateway HTTP API v2 request into a policy
 // inference. It intentionally contains no policy evaluation rules.
+//
+//	@Summary		Run one deterministic inference over a DOT policy
+//	@Description	Validates the request, parses the DOT policy graph, executes a single path, and returns the enriched variables.
+//	@Tags			inference
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		inferRequest	true	"DOT policy and input variables"
+//	@Success		200		{object}	inferResponse	"input variables plus inferred values"
+//	@Failure		400		{object}	apperr.Error	"invalid_json, invalid_input, invalid_policy or inference_error"
+//	@Failure		404		{object}	apperr.Error	"path is not /infer"
+//	@Failure		405		{object}	apperr.Error	"method is not POST"
+//	@Failure		413		{object}	apperr.Error	"request body exceeds the configured limit"
+//	@Failure		500		{object}	apperr.Error	"unexpected internal failure"
+//	@Router			/infer [post]
 func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	respond := func(response events.APIGatewayV2HTTPResponse, code string) (events.APIGatewayV2HTTPResponse, error) {
-		return response, nil
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		observability.Logger(ctx).Error("invalid configuration", "error", err)
-		return respond(errorResponse(500, codeInternal, "invalid configuration"), codeInternal)
+		return fail(ctx, apperr.New(apperr.Internal, "invalid configuration"))
 	}
 
-	if request.RequestContext.HTTP.Method != "POST" {
-		return respond(errorResponse(405, codeMethod, "method must be POST"), codeMethod)
+	if request.RequestContext.HTTP.Method != http.MethodPost {
+		return fail(ctx, apperr.New(apperr.MethodNotAllowed, "method must be POST"))
 	}
 	path := request.RawPath
 	if stage := request.RequestContext.Stage; stage != "" {
 		path = strings.TrimPrefix(path, "/"+stage)
 	}
-	if path != "/infer" {
-		return respond(errorResponse(404, codeNotFound, "path must be /infer"), codeNotFound)
+	if path != inferPath {
+		return fail(ctx, apperr.New(apperr.NotFound, "path must be /infer"))
 	}
 	if !isJSONContentType(request.Headers) {
-		return respond(errorResponse(400, codeInvalidJSON, "Content-Type must be application/json"), codeInvalidJSON)
+		return fail(ctx, apperr.New(apperr.InvalidJSON, "Content-Type must be application/json"))
 	}
 
 	body, err := requestBody(request)
 	if err != nil {
-		return respond(errorResponse(400, codeInvalidJSON, err.Error()), codeInvalidJSON)
+		return fail(ctx, err)
 	}
 	if len(body) > cfg.MaxBodyBytes {
-		return respond(errorResponse(413, codeTooLarge, "request body exceeds the configured limit"), codeTooLarge)
+		return fail(ctx, apperr.New(apperr.TooLarge, "request body exceeds the configured limit"))
 	}
 
 	policyDOT, input, err := decodeRequest(body)
 	if err != nil {
-		return respond(errorResponse(400, errorCode(err), err.Error()), errorCode(err))
+		return fail(ctx, err)
 	}
 
 	parseCtx, parseSpan := observability.StartSpan(ctx, "policy.parse")
 	parsed, err := policy.Parse(policyDOT, policy.WithLimits(cfg.Limits()))
 	parseSpan.End(parseCtx)
 	if err != nil {
-		return respond(errorResponse(400, codeInvalidPolicy, publicMessage(err)), codeInvalidPolicy)
+		return fail(ctx, err)
 	}
 	observability.Logger(ctx).Info("policy parsed", "nodes", parsed.NodeCount(), "edges", parsed.EdgeCount())
 
@@ -93,15 +119,31 @@ func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.A
 	output, err := parsed.Infer(input)
 	inferSpan.End(inferCtx)
 	if err != nil {
-		return respond(errorResponse(400, codeInferenceError, publicMessage(err)), codeInferenceError)
+		return fail(ctx, err)
 	}
 	observability.Logger(ctx).Info("inference completed", "input_vars", len(input), "output_vars", len(output))
 
-	payload, err := json.Marshal(map[string]any{"output": output})
+	payload, err := json.Marshal(inferResponse{Output: output})
 	if err != nil {
-		return respond(errorResponse(500, codeInternal, "failed to encode response"), codeInternal)
+		return fail(ctx, apperr.New(apperr.Internal, "failed to encode response"))
 	}
-	return respond(jsonResponse(200, payload), "success")
+	return jsonResponse(http.StatusOK, payload), nil
+}
+
+// fail converts a coded error into the wire response. Uncoded errors are
+// unexpected: they are logged and collapsed into internal_error so
+// implementation details never leak to the client.
+func fail(ctx context.Context, err error) (events.APIGatewayV2HTTPResponse, error) {
+	apiErr := apperr.From(err)
+	if apiErr == nil {
+		observability.Logger(ctx).Error("unexpected error", "error", err)
+		apiErr = &apperr.Error{Code: apperr.Internal, Message: "internal error"}
+	}
+	status, ok := statusByCode[apiErr.Code]
+	if !ok {
+		status = http.StatusInternalServerError
+	}
+	return errorResponse(status, apiErr), nil
 }
 
 func requestBody(request events.APIGatewayV2HTTPRequest) ([]byte, error) {
@@ -110,16 +152,16 @@ func requestBody(request events.APIGatewayV2HTTPRequest) ([]byte, error) {
 	}
 	body, err := base64.StdEncoding.DecodeString(request.Body)
 	if err != nil {
-		return nil, errors.New("request body is not valid base64")
+		return nil, apperr.New(apperr.InvalidJSON, "request body is not valid base64")
 	}
 	return body, nil
 }
 
 func isJSONContentType(headers map[string]string) bool {
 	for key, value := range headers {
-		if strings.EqualFold(key, "content-type") {
+		if strings.EqualFold(key, headerContentType) {
 			mediaType := strings.TrimSpace(strings.Split(value, ";")[0])
-			return strings.EqualFold(mediaType, "application/json")
+			return strings.EqualFold(mediaType, jsonMediaType)
 		}
 	}
 	return false
@@ -127,45 +169,45 @@ func isJSONContentType(headers map[string]string) bool {
 
 func decodeRequest(body []byte) (string, map[string]any, error) {
 	if err := rejectDuplicateKeys(body); err != nil {
-		return "", nil, requestError(codeInvalidJSON, err.Error())
+		return "", nil, apperr.New(apperr.InvalidJSON, "%v", err)
 	}
 
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&raw); err != nil {
-		return "", nil, requestError(codeInvalidJSON, "request body must be a JSON object")
+		return "", nil, apperr.New(apperr.InvalidJSON, "request body must be a JSON object")
 	}
 	if decoder.More() {
-		return "", nil, requestError(codeInvalidJSON, "request body must contain one JSON value")
+		return "", nil, apperr.New(apperr.InvalidJSON, "request body must contain one JSON value")
 	}
-	if _, ok := raw["policy_dot"]; !ok {
-		return "", nil, requestError(codeInvalidJSON, "policy_dot is required")
+	if _, ok := raw[fieldPolicyDot]; !ok {
+		return "", nil, apperr.New(apperr.InvalidJSON, "policy_dot is required")
 	}
-	if _, ok := raw["input"]; !ok {
-		return "", nil, requestError(codeInvalidInput, "input is required")
+	if _, ok := raw[fieldInput]; !ok {
+		return "", nil, apperr.New(apperr.InvalidInput, "input is required")
 	}
 	if len(raw) != 2 {
-		return "", nil, requestError(codeInvalidJSON, "request must contain exactly policy_dot and input")
+		return "", nil, apperr.New(apperr.InvalidJSON, "request must contain exactly policy_dot and input")
 	}
 
 	var policyDOT string
-	if err := json.Unmarshal(raw["policy_dot"], &policyDOT); err != nil || strings.TrimSpace(policyDOT) == "" {
-		return "", nil, requestError(codeInvalidJSON, "policy_dot must be a non-empty string")
+	if err := json.Unmarshal(raw[fieldPolicyDot], &policyDOT); err != nil || strings.TrimSpace(policyDOT) == "" {
+		return "", nil, apperr.New(apperr.InvalidJSON, "policy_dot must be a non-empty string")
 	}
 
 	var rawInput map[string]json.RawMessage
-	if err := json.Unmarshal(raw["input"], &rawInput); err != nil || rawInput == nil {
-		return "", nil, requestError(codeInvalidInput, "input must be a JSON object")
+	if err := json.Unmarshal(raw[fieldInput], &rawInput); err != nil || rawInput == nil {
+		return "", nil, apperr.New(apperr.InvalidInput, "input must be a JSON object")
 	}
 
 	input := make(map[string]any, len(rawInput))
 	for key, rawValue := range rawInput {
-		if !inputIdentifierPattern.MatchString(key) {
-			return "", nil, requestError(codeInvalidInput, fmt.Sprintf("input key %q is not a valid identifier", key))
+		if !policy.IsIdentifier(key) {
+			return "", nil, apperr.New(apperr.InvalidInput, "input key %q is not a valid identifier", key)
 		}
 		value, err := decodeInputValue(rawValue)
 		if err != nil {
-			return "", nil, requestError(codeInvalidInput, fmt.Sprintf("input.%s: %v", key, err))
+			return "", nil, apperr.New(apperr.InvalidInput, "input.%s: %v", key, err)
 		}
 		input[key] = value
 	}
@@ -255,35 +297,8 @@ func walkJSONValue(decoder *json.Decoder) error {
 	}
 }
 
-type requestErr struct {
-	code    string
-	message string
-}
-
-func (e *requestErr) Error() string { return e.message }
-
-func requestError(code, message string) error {
-	return &requestErr{code: code, message: message}
-}
-
-func errorCode(err error) string {
-	var requestErr *requestErr
-	if errors.As(err, &requestErr) {
-		return requestErr.code
-	}
-	return codeInvalidJSON
-}
-
-func publicMessage(err error) string {
-	var policyErr *policy.Error
-	if errors.As(err, &policyErr) {
-		return policyErr.Message
-	}
-	return codeInternal
-}
-
-func errorResponse(status int, code, message string) events.APIGatewayV2HTTPResponse {
-	payload, _ := json.Marshal(errorBody{Code: code, Message: message})
+func errorResponse(status int, apiErr *apperr.Error) events.APIGatewayV2HTTPResponse {
+	payload, _ := json.Marshal(apiErr)
 	return jsonResponse(status, payload)
 }
 

@@ -7,28 +7,24 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
 	godot "gonum.org/v1/gonum/graph/formats/dot"
 	gvast "gonum.org/v1/gonum/graph/formats/dot/ast"
 )
 
-var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// Kind identifies whether a failure belongs to the policy or to inference.
-type Kind string
-
 const (
-	InvalidPolicy   Kind = "invalid_policy"
-	InferenceError  Kind = "inference_error"
-	identifierStart      = "start"
+	startNodeName = "start"
+	attrCond      = "cond"
+	attrResult    = "result"
 )
 
-// Error carries the class of error needed by the HTTP layer.
-type Error struct {
-	Kind    Kind
-	Message string
-}
+var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func (e *Error) Error() string { return e.Message }
+// IsIdentifier reports whether name follows the identifier grammar shared by
+// node names, input keys, and assignment keys.
+func IsIdentifier(name string) bool {
+	return identifierPattern.MatchString(name)
+}
 
 // NodeCount returns the number of nodes referenced by the policy graph.
 func (p *Policy) NodeCount() int { return len(p.nodes) }
@@ -37,11 +33,11 @@ func (p *Policy) NodeCount() int { return len(p.nodes) }
 func (p *Policy) EdgeCount() int { return p.edges }
 
 func invalidPolicy(format string, args ...any) error {
-	return &Error{Kind: InvalidPolicy, Message: fmt.Sprintf(format, args...)}
+	return apperr.New(apperr.InvalidPolicy, format, args...)
 }
 
 func inferenceError(format string, args ...any) error {
-	return &Error{Kind: InferenceError, Message: fmt.Sprintf(format, args...)}
+	return apperr.New(apperr.InferenceError, format, args...)
 }
 
 // Policy is the executable model built from a DOT graph.
@@ -130,7 +126,7 @@ func Parse(dot string, opts ...Option) (*Policy, error) {
 				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
 			}
 			for _, attr := range s.Attrs {
-				if attr.Key != "result" {
+				if attr.Key != attrResult {
 					continue
 				}
 				rawResult, err := dotAttrValue(attr.Val)
@@ -173,7 +169,7 @@ func Parse(dot string, opts ...Option) (*Policy, error) {
 			}
 			var rawCond string
 			for _, attr := range s.Attrs {
-				if attr.Key == "cond" {
+				if attr.Key == attrCond {
 					rawCond = attr.Val
 				}
 			}
@@ -210,10 +206,10 @@ func Parse(dot string, opts ...Option) (*Policy, error) {
 		}
 	}
 
-	if _, ok := p.nodes[identifierStart]; !ok {
+	if _, ok := p.nodes[startNodeName]; !ok {
 		return nil, invalidPolicy("policy graph must contain a start node")
 	}
-	p.start = identifierStart
+	p.start = startNodeName
 
 	if hasCycle(p.nodes) {
 		return nil, invalidPolicy("policy graph must not contain cycles")

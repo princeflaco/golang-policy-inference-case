@@ -22,13 +22,13 @@ mixed conditions (`>=`, `==`, `&&`/`||`), 4 input variables (`age`, `score`,
 go test -run '^$' -bench . -benchmem -count=3 ./internal/policy
 
 # HTTP load: 50 RPS offered, 10s warmup + 60s measurement
-POLICY_INFER_LOAD_TEST=1 go test -run TestHTTPLoad ./internal/httpapi -v
+go test -run TestHTTPLoad -load ./internal/httpapi -v   # or: make load-test
 ```
 
 ## Results — engine benchmarks (median of 3 runs)
 
 | Operation | ns/op | B/op | allocs/op |
-|---|---:|---:|---:|
+| --- | ---: | ---: | ---: |
 | `Parse` (medium policy) | ~40 558 | 21 772 | 428 |
 | `Infer` | ~1 096 | 368 | 5 |
 | `Parse + Infer` | ~38 743 | 22 140 | 433 |
@@ -57,7 +57,7 @@ only 5 objects per call (the output map and entries).
 ```
 
 | Metric | Value | Target | Result |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | Offered → achieved RPS | 50 → 49.9999 | sustain 50 | pass |
 | Errors / non-200 | 0 / 0 | 0 | pass |
 | P90 latency | 0.874 ms | < 30 ms | pass (34× headroom) |

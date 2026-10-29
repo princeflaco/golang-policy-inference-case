@@ -258,17 +258,28 @@ Estado atual:
 ### Pré-requisitos
 
 - Go 1.26+
-- Docker Engine
-- AWS SAM CLI
+- Docker Engine e AWS SAM CLI — apenas para a emulação Lambda; os testes e o
+  modo HTTP local dependem somente de Go
 
 ### Verificação
 
 ```bash
-go test ./...
+go test ./...        # ou: make test
 go vet ./...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./build/infer ./cmd/infer
 sam build
 sam local start-api --warm-containers EAGER
+```
+
+### Execução local
+
+O mesmo binário serve HTTP puro quando `HTTP_ADDR` está definido, sem passar
+pelo SAM. As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz
+(ver `.env.example`; precedência: env > `.env` > defaults):
+
+```bash
+make run     # go run ./cmd/infer -http-addr=:8080
+make debug   # idem, com logs em nível debug
 ```
 
 ### Exemplo
@@ -306,48 +317,50 @@ Configuração por variáveis de ambiente, com os defaults também definidos em 
 | `MAX_POLICY_EDGES` | `5000` |
 | `MAX_CONDITION_BYTES` | `4096` |
 | `MAX_EXPRESSION_DEPTH` | `64` |
+| `LOG_LEVEL` | `info` |
+
+`HTTP_ADDR` (sem default) liga o modo HTTP local; `-http-addr` e `-log-level` sobrescrevem as variáveis equivalentes.
 
 Corpo acima do limite retorna HTTP 413 com `request_too_large`. Limites da política retornam `invalid_policy`. Cada requisição gera um log estruturado com status, código e duração, sem gravar o DOT ou valores de `input`.
 
 ### Desempenho observado
 
-Ambiente: Windows amd64, AMD Ryzen 5 5500, Go 1.26.4. Política média: 5 nós, 6 arestas, condições mistas e 4 variáveis de entrada.
+A referência completa — metodologia, ambiente, números e limitações — está em `docs/reports/performance.md`. Resumo:
+
+- `Infer` custa ~1 µs contra ~40 µs do `Parse` por política média (5 nós, 6 arestas); inferência é ~37× mais barata que parsing.
+- Carga de 50 RPS por 60 s, zero erros, P90 bem abaixo da meta de 30 ms — tanto via `httptest` quanto via k6 contra o binário em container distroless.
 
 ```bash
-go test -bench . -benchmem ./internal/policy
+go test -run '^$' -bench . -benchmem -count=3 ./internal/policy   # benchmarks do motor
+make load-test                                                  # 50 RPS via httptest
+make perf-container                                             # k6 em container separado
 ```
 
-| Benchmark | Tempo | Memória | Alocações |
-| --- | ---: | ---: | ---: |
-| `BenchmarkParseMediumPolicy` | 54,864 ns/op | 27,855 B/op | 473 |
-| `BenchmarkInferMediumPolicy` | 1,202 ns/op | 368 B/op | 5 |
-| `BenchmarkParseAndInferMediumPolicy` | 54,908 ns/op | 28,223 B/op | 478 |
-
-Uma repetição feita enquanto o Docker ainda removia containers do teste SAM saturado ficou mais lenta (95,060 ns/op; 2,036 ns/op; 105,768 ns/op). A diferença é ruído ambiental, não mudança no código.
-
-Carga HTTP real, sem o emulador SAM, via `httptest.Server` e `http.Client`: 10 segundos de aquecimento, 60 segundos de medição, oferta fixa de 50 RPS.
-
-```bash
-POLICY_INFER_LOAD_TEST=1 go test -run TestHTTPLoadMediumPolicy -v ./internal/httpapi
-```
-
-Resultado: 3.000 requisições, 49,9995 RPS alcançados, 3.000 respostas HTTP 200, zero erros, P50 de 1,093 ms, P90 de 2,885 ms, P99 de 9,701 ms e máximo de 58,118 ms. A meta de P90 menor que 30 ms foi atendida nesse transporte local.
-
-Essas medições não são medições AWS Lambda. A tentativa anterior de carga com `sam local start-api` no modo padrão criou um container `inferfunction:rapid-x86_64` por invocação, saturou o Docker local com cerca de 1.900 containers e produziu timeouts/502; portanto não é evidência de latência do serviço. Para comparar a emulação depois, use `sam local start-api --warm-containers EAGER`, mas trate o resultado como custo do emulador, não como custo de AWS.
+São medições locais: não incluem cold start de Lambda nem API Gateway. Para emular via SAM, use `make sam-local`.
 
 ### Estrutura
 
-- `internal/policy`: parsing e validação DOT, modelo do grafo, condições, atribuições e inferência.
-- `internal/httpapi`: contrato HTTP/API Gateway v2, erros, limites e logging.
-- `cmd/infer`: entrypoint Lambda.
+- `cmd/infer`: entrypoint — Lambda por padrão, HTTP puro quando `HTTP_ADDR` está definido.
+- `internal/policy`: parsing e validação DOT, modelo do grafo, condições, atribuições e inferência. Limites do `Parse` usam *Functional Options* (`policy.WithLimits`).
+- `internal/httpapi`: contrato HTTP/API Gateway v2, middleware (correlation id, request logging) e adaptador `net/http`.
+- `internal/apperr`: códigos de erro do contrato (`code`/`message`) compartilhados pelas camadas.
+- `internal/config`: configuração por variáveis de ambiente e `.env` via viper.
+- `internal/observability`: correlation id, spans e logger `slog` enriquecido por contexto.
 - `Dockerfile` e `template.yaml`: imagem Lambda e execução local com SAM.
+- `tools/api`: requests prontos (.http e collection Postman); `tools/perf`: harness k6 + Dockerfile da imagem de teste.
+- `docs/swagger`: especificação OpenAPI gerada das anotações `swag` (`make swagger`).
+- `scripts/pre-commit`: hook versionado (gofmt, vet, testes e frescor do swagger); habilitar uma vez por clone com `make install-hooks`.
 - `internal/policy/policy_bench_test.go` e `internal/httpapi/handler_load_test.go`: evidências de desempenho.
 
-## Análise de design e performance
+## Documentação da API
 
-- **Relatório de design patterns**: `docs/reports/design-patterns.md` — mapeia onde cada padrão se encaixa e documenta o padrão implementado (*Functional Options* para limites do `policy.Parse`, ex.: `policy.Parse(dot, policy.WithLimits(l))`).
-- **Relatório de performance**: `docs/reports/performance.md` — metodologia, ambiente, benchmarks do motor e teste de carga HTTP real (50 RPS, P90 ~0,87 ms).
-- **Makefile**: alvos `test`, `test-race`, `vet`, `build`, `build-lambda`, `bench`, `load-test`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
+O contrato `POST /infer` é gerado das anotações `swag` em `internal/httpapi/handler.go` + `cmd/infer/main.go` para `docs/swagger/` (`docs.go`, `swagger.json`, `swagger.yaml`). Regenerar após mudar anotações ou tipos do contrato com `make swagger`; o pre-commit verifica que o resultado esteja commitado. A spec em `docs/specs/policy-inference.md` continua sendo a referência do comportamento.
+
+## Relatório de performance e ferramentas
+
+- **Relatório de performance**: `docs/reports/performance.md` — metodologia, ambiente, benchmarks do motor e testes de carga (httptest e k6 em container; meta de P90 < 30 ms atendida).
+- **Processo de implementação**: `docs/implementation.md` — como o serviço foi construído: incrementos R0–R7 da spec e a etapa de hardening posterior.
+- **Makefile**: `make help` lista os alvos — `fmt`, `test`, `test-race`, `vet`, `check`, `build`, `build-lambda`, `bench`, `load-test`, `perf-container`, `run`, `debug`, `swagger`, `install-hooks`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
 
 ## Testando a API manualmente
 

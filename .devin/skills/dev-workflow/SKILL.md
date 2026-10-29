@@ -14,7 +14,7 @@ make run          # local HTTP server on :8080 (flags, not env — Windows-safe)
 make debug        # same, with LOG_LEVEL=debug
 make swagger      # regenerate docs/swagger after touching contract or annotations
 make bench        # engine micro-benchmarks
-make load-test    # 50 RPS / 60s httptest load measurement (flag-gated, ~70s)
+make load-test    # 50 RPS / 60s per policy shape via httptest (flag-gated, ~140s for medium + complex)
 make sam-local    # SAM emulation (always --warm-containers EAGER)
 ```
 
@@ -54,7 +54,7 @@ in `cmd/infer/main.go` and injected; tests build `httpapi.Settings` /
   and both adapters (`adapters_test.go`).
 - Capture logs in tests with `observability.WithLogger(ctx, logger)`, not
   `slog.SetDefault`.
-- Load test is opt-in: `go test ./internal/httpapi -run TestHTTPLoad -v -args -load`.
+- Load test is opt-in: `go test ./internal/httpapi -run TestHTTPLoad -v -args -load`; `-load-shape=medium|complex` picks one payload. Policy shapes come from `internal/policy/policytest` generators — extend them there, not by hand-writing DOT in tests.
 - Commits/push/issues only when the user asks (spec §10).
 - GitHub Issues for `princeflaco/golang-policy-inference-case` are the
   tracker; see `.devin/docs/agents/issue-tracker.md` before touching them.

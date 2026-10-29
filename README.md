@@ -104,12 +104,12 @@ A configuração é lida e validada uma única vez na inicialização; valores i
 
 Resumo do [relatório completo](docs/reports/performance.md) (metodologia, ambiente e limitações):
 
-- `Infer` custa ~1 µs contra ~40 µs do `Parse` por política média (5 nós, 6 arestas); inferência é ~37× mais barata que parsing.
-- Carga de 50 RPS por 60 s, zero erros, P90 bem abaixo da meta de 30 ms — tanto via `httptest` quanto via k6 contra o binário em container distroless.
+- `Infer` custa ~1 µs contra ~40 µs do `Parse` por política média (5 nós, 6 arestas); em políticas complexas o `Parse` escala com o tamanho do DAG (DAG de 82 nós ≈ 2,6 ms) e `Infer` com a profundidade do caminho.
+- Carga de 50 RPS por 60 s, zero erros, P90 bem abaixo da meta de 30 ms nas formas média e complexa — tanto via `httptest` quanto via k6 contra o binário em container distroless.
 
 ```bash
-go test -run '^$' -bench . -benchmem -count=3 ./internal/policy   # benchmarks do motor
-make load-test                                                  # 50 RPS via httptest
+go test -run '^$' -bench . -benchmem -count=3 ./internal/policy   # benchmarks do motor, por forma de política
+make load-test                                                  # 50 RPS via httptest — formas medium + complex (~140 s)
 make perf-container                                             # k6 em container separado
 ```
 
@@ -127,7 +127,7 @@ São medições locais: não incluem cold start de Lambda nem API Gateway. Para 
 - `tools/api`: requests prontos (.http e collection Postman); `tools/perf`: harness k6 + Dockerfile da imagem de teste.
 - `docs/`: spec, enunciado, processo de implementação, OpenAPI gerada e relatório de performance.
 - `scripts/pre-commit`: hook versionado (gofmt, vet, testes com piso de 90% de cobertura e frescor do swagger); habilitar uma vez por clone com `make install-hooks`.
-- `internal/policy/policy_bench_test.go` e `internal/httpapi/handler_load_test.go`: evidências de desempenho.
+- `internal/policy/policytest`: geradores de políticas de formas controladas (cadeia, fan-out, condição larga, DAG em camadas) usados por `policy_bench_test.go` e `handler_load_test.go` — evidências de desempenho.
 
 ## Documentação da API
 

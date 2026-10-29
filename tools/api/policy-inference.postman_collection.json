@@ -1,0 +1,278 @@
+{
+  "info": {
+    "name": "Policy Inference API",
+    "description": "POST /infer — DOT policy inference service. Works against SAM local (http://localhost:3000), the standalone HTTP server (HTTP_ADDR=:8080) or the perf container (http://localhost:8080).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "correlation_id",
+      "value": "{{$guid}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "happy path",
+      "item": [
+        {
+          "name": "approved (age=20)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"digraph P { start [result=\\\"\\\"]; approved [result=\\\"approved=true\\\"]; rejected [result=\\\"approved=false\\\"]; start -> approved [cond=\\\"age>=18\\\"]; start -> rejected [cond=\\\"age<18\\\"]; }\", \"input\": {\"age\": 20}}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "rejected (age=15)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"digraph P { start [result=\\\"\\\"]; approved [result=\\\"approved=true\\\"]; rejected [result=\\\"approved=false\\\"]; start -> approved [cond=\\\"age>=18\\\"]; start -> rejected [cond=\\\"age<18\\\"]; }\", \"input\": {\"age\": 15}}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "medium policy (prime, score 720)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"digraph P { start [result=\\\"\\\"]; score [result=\\\"tier=gold\\\"]; age [result=\\\"approved=true\\\"]; review [result=\\\"approved=false,reason=review\\\"]; reject [result=\\\"approved=false,reason=denied\\\"]; start -> score [cond=\\\"score>=600 && active==true\\\"]; start -> reject [cond=\\\"active==false\\\"]; score -> age [cond=\\\"segment==\\\\\\\"prime\\\\\\\"\\\"]; score -> review [cond=\\\"segment!=\\\\\\\"prime\\\\\\\" || score<700\\\"]; age -> reject [cond=\\\"age<18\\\"]; }\", \"input\": {\"age\": 20, \"score\": 720, \"segment\": \"prime\", \"active\": true}}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "errors",
+      "item": [
+        {
+          "name": "missing input -> invalid_input",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"digraph P { start [result=\\\"\\\"]; approved [result=\\\"approved=true\\\"]; rejected [result=\\\"approved=false\\\"]; start -> approved [cond=\\\"age>=18\\\"]; start -> rejected [cond=\\\"age<18\\\"]; }\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test(\"code invalid_input\", () => pm.expect(pm.response.json().code).to.eql(\"invalid_input\"));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "invalid policy -> invalid_policy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"graph P { a -- b }\", \"input\": {}}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test(\"code invalid_policy\", () => pm.expect(pm.response.json().code).to.eql(\"invalid_policy\"));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "unresolved var -> inference_error",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-correlation-id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"policy_dot\": \"digraph P { start [result=\\\"\\\"]; a [result=\\\"ok=true\\\"]; start -> a [cond=\\\"missing==1\\\"]; }\", \"input\": {}}"
+            },
+            "url": {
+              "raw": "{{base_url}}/infer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "infer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.expect(pm.response.code).to.eql(400));",
+                  "pm.test(\"code inference_error\", () => pm.expect(pm.response.json().code).to.eql(\"inference_error\"));",
+                  "pm.test(\"correlation id echoed\", () => pm.expect(pm.response.headers.get(\"x-correlation-id\")).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,337 @@
+package policy
+
+import (
+	"math"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
+	godot "gonum.org/v1/gonum/graph/formats/dot"
+	gvast "gonum.org/v1/gonum/graph/formats/dot/ast"
+)
+
+const (
+	startNodeName = "start"
+	attrCond      = "cond"
+	attrResult    = "result"
+)
+
+// identifierPattern is the grammar shared by node names, input keys, and
+// assignment keys.
+var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func validateInput(key string, value any) error {
+	if !identifierPattern.MatchString(key) {
+		return apperr.New(apperr.InvalidInput, "input key %q is not a valid identifier", key)
+	}
+	switch typed := value.(type) {
+	case string, bool:
+		return nil
+	case float64:
+		if math.IsInf(typed, 0) || math.IsNaN(typed) {
+			return apperr.New(apperr.InvalidInput, "input.%s: number must be finite", key)
+		}
+		return nil
+	default:
+		return apperr.New(apperr.InvalidInput, "input.%s: value must be a string, number, or boolean", key)
+	}
+}
+
+// NodeCount returns the number of nodes referenced by the policy graph.
+func (p *Policy) NodeCount() int { return len(p.nodes) }
+
+// EdgeCount returns the number of edge declarations in the policy graph.
+func (p *Policy) EdgeCount() int { return p.edges }
+
+func invalidPolicy(format string, args ...any) error {
+	return apperr.New(apperr.InvalidPolicy, format, args...)
+}
+
+func inferenceError(format string, args ...any) error {
+	return apperr.New(apperr.InferenceError, format, args...)
+}
+
+// Policy is the executable model built from a DOT graph.
+type Policy struct {
+	nodes map[string]*node
+	edges int
+	start string
+}
+
+type node struct {
+	assignments []assignment
+	edges       []*edge
+}
+
+type assignment struct {
+	key   string
+	value any
+}
+
+type edge struct {
+	to   string
+	cond condition
+}
+
+// Parse converts the approved subset of DOT into an executable policy,
+// rejecting it with apperr.InvalidPolicy when it exceeds limits. Invalid
+// limits are a programming error and yield an uncoded error.
+func Parse(dot string, limits Limits) (*Policy, error) {
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+
+	file, err := godot.ParseString(dot)
+	if err != nil {
+		return nil, invalidPolicy("invalid DOT: %v", err)
+	}
+	if len(file.Graphs) != 1 {
+		return nil, invalidPolicy("policy must contain exactly one graph")
+	}
+
+	graph := file.Graphs[0]
+	if !graph.Directed {
+		return nil, invalidPolicy("policy graph must be directed")
+	}
+
+	p := &Policy{nodes: make(map[string]*node)}
+	declared := make(map[string]bool)
+	seenEdges := make(map[string]bool)
+	edgeCount := 0
+	for _, stmt := range graph.Stmts {
+		if _, ok := stmt.(*gvast.EdgeStmt); ok {
+			edgeCount++
+		}
+	}
+	if edgeCount > limits.MaxPolicyEdges {
+		return nil, invalidPolicy("policy has %d edges; limit is %d", edgeCount, limits.MaxPolicyEdges)
+	}
+	p.edges = edgeCount
+
+	getNode := func(name string) *node {
+		if existing, ok := p.nodes[name]; ok {
+			return existing
+		}
+		n := &node{}
+		p.nodes[name] = n
+		return n
+	}
+
+	for i, stmt := range graph.Stmts {
+		switch s := stmt.(type) {
+		case *gvast.NodeStmt:
+			name, err := vertexName(s.Node)
+			if err != nil {
+				return nil, err
+			}
+			if declared[name] {
+				return nil, invalidPolicy("node %q declared more than once", name)
+			}
+			declared[name] = true
+
+			if err := rejectDuplicateAttrs(s.Attrs); err != nil {
+				return nil, err
+			}
+			n := getNode(name)
+			if len(p.nodes) > limits.MaxPolicyNodes {
+				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
+			}
+			for _, attr := range s.Attrs {
+				if attr.Key != attrResult {
+					continue
+				}
+				rawResult, err := dotAttrValue(attr.Val)
+				if err != nil {
+					return nil, invalidPolicy("node %q has invalid result: %v", name, err)
+				}
+				assignments, err := parseResult(rawResult)
+				if err != nil {
+					return nil, err
+				}
+				n.assignments = assignments
+			}
+
+		case *gvast.EdgeStmt:
+			from, err := vertexName(s.From)
+			if err != nil {
+				return nil, err
+			}
+			if s.To == nil {
+				return nil, invalidPolicy("edge statement %d has no destination", i+1)
+			}
+			if s.To.To != nil {
+				return nil, invalidPolicy("chained edge statements are not supported")
+			}
+			if !s.To.Directed {
+				return nil, invalidPolicy("edges must be directed")
+			}
+			to, err := vertexName(s.To.Vertex)
+			if err != nil {
+				return nil, err
+			}
+			edgeKey := from + "\x00" + to
+			if seenEdges[edgeKey] {
+				return nil, invalidPolicy("edge %q -> %q declared more than once", from, to)
+			}
+			seenEdges[edgeKey] = true
+
+			if err := rejectDuplicateAttrs(s.Attrs); err != nil {
+				return nil, err
+			}
+			var rawCond string
+			for _, attr := range s.Attrs {
+				if attr.Key == attrCond {
+					rawCond = attr.Val
+				}
+			}
+			if strings.TrimSpace(rawCond) == "" {
+				return nil, invalidPolicy("edge %q -> %q must declare a non-empty cond", from, to)
+			}
+			rawCond, err = dotAttrValue(rawCond)
+			if err != nil {
+				return nil, invalidPolicy("edge %q -> %q has invalid cond: %v", from, to, err)
+			}
+			if len(rawCond) > limits.MaxConditionBytes {
+				return nil, invalidPolicy("edge %q -> %q cond exceeds %d bytes", from, to, limits.MaxConditionBytes)
+			}
+			cond, err := parseCondition(rawCond, limits.MaxExpressionDepth)
+			if err != nil {
+				return nil, invalidPolicy("edge %q -> %q has invalid cond: %v", from, to, err)
+			}
+
+			getNode(to)
+			fromNode := getNode(from)
+			if len(p.nodes) > limits.MaxPolicyNodes {
+				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
+			}
+			fromNode.edges = append(fromNode.edges, &edge{to: to, cond: cond})
+
+		case *gvast.Subgraph:
+			return nil, invalidPolicy("subgraphs are not supported")
+		case *gvast.AttrStmt:
+			return nil, invalidPolicy("default graph, node, or edge attributes are not supported")
+		case *gvast.Attr:
+			return nil, invalidPolicy("top-level attributes are not supported")
+		default:
+			return nil, invalidPolicy("unsupported DOT statement %T", stmt)
+		}
+	}
+
+	if _, ok := p.nodes[startNodeName]; !ok {
+		return nil, invalidPolicy("policy graph must contain a start node")
+	}
+	p.start = startNodeName
+
+	if hasCycle(p.nodes) {
+		return nil, invalidPolicy("policy graph must not contain cycles")
+	}
+	return p, nil
+}
+
+// Infer executes one deterministic path and returns a new state. The input map
+// is not modified.
+//
+// Infer owns the input contract: keys must follow the identifier grammar and
+// values must be strings, finite float64 numbers, or booleans; violations are
+// apperr.InvalidInput. Failures while evaluating conditions are
+// apperr.InferenceError. No partial state is returned on error.
+func (p *Policy) Infer(input map[string]any) (map[string]any, error) {
+	state := make(map[string]any, len(input)+4)
+	for key, value := range input {
+		if err := validateInput(key, value); err != nil {
+			return nil, err
+		}
+		state[key] = value
+	}
+
+	current := p.start
+	for {
+		n := p.nodes[current]
+		for _, assignment := range n.assignments {
+			state[assignment.key] = assignment.value
+		}
+
+		var next string
+		for _, edge := range n.edges {
+			matched, err := edge.cond.eval(state)
+			if err != nil {
+				return nil, err
+			}
+			if matched {
+				next = edge.to
+				break
+			}
+		}
+		if next == "" {
+			return state, nil
+		}
+		current = next
+	}
+}
+
+func vertexName(v gvast.Vertex) (string, error) {
+	n, ok := v.(*gvast.Node)
+	if !ok {
+		return "", invalidPolicy("subgraph vertices are not supported")
+	}
+	if n.Port != nil {
+		return "", invalidPolicy("node ports are not supported")
+	}
+	if !identifierPattern.MatchString(n.ID) {
+		return "", invalidPolicy("invalid identifier %q", n.ID)
+	}
+	return n.ID, nil
+}
+
+func rejectDuplicateAttrs(attrs []*gvast.Attr) error {
+	seen := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		if seen[attr.Key] {
+			return invalidPolicy("attribute %q declared more than once", attr.Key)
+		}
+		seen[attr.Key] = true
+	}
+	return nil
+}
+
+func hasCycle(nodes map[string]*node) bool {
+	const (
+		unvisited = 0
+		visiting  = 1
+		visited   = 2
+	)
+	state := make(map[string]int, len(nodes))
+	var visit func(string) bool
+	visit = func(name string) bool {
+		switch state[name] {
+		case visiting:
+			return true
+		case visited:
+			return false
+		}
+		state[name] = visiting
+		for _, edge := range nodes[name].edges {
+			if visit(edge.to) {
+				return true
+			}
+		}
+		state[name] = visited
+		return false
+	}
+	for _, name := range orderedNodeNames(nodes) {
+		if visit(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func orderedNodeNames(nodes map[string]*node) []string {
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

@@ -1,0 +1,74 @@
+### Policy Inference API — REST Client (VS Code: "REST Client" extension, ou Rider/IntelliJ nativo)
+### Ajuste @host conforme o ambiente:
+###   SAM local:        http://localhost:3000
+###   HTTP server:      http://localhost:8080   (HTTP_ADDR=:8080 ./infer)
+###   Container perf:   http://localhost:8080   (make perf-container / docker run -p 8080:8080)
+
+@host = http://localhost:8080
+@correlationId = demo-corr-001
+
+### 1. Happy path — aprovado (age >= 18, caminho start -> approved)
+POST {{host}}/infer
+Content-Type: application/json
+x-correlation-id: {{correlationId}}
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; approved [result=\"approved=true\"]; rejected [result=\"approved=false\"]; start -> approved [cond=\"age>=18\"]; start -> rejected [cond=\"age<18\"]; }",
+  "input": { "age": 20 }
+}
+
+### 2. Happy path — rejeitado (age < 18)
+POST {{host}}/infer
+Content-Type: application/json
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; approved [result=\"approved=true\"]; rejected [result=\"approved=false\"]; start -> approved [cond=\"age>=18\"]; start -> rejected [cond=\"age<18\"]; }",
+  "input": { "age": 15 }
+}
+
+### 3. Política média — múltiplos nós, && e ||, sobrescrita
+POST {{host}}/infer
+Content-Type: application/json
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; score [result=\"tier=gold\"]; age [result=\"approved=true\"]; review [result=\"approved=false,reason=review\"]; reject [result=\"approved=false,reason=denied\"]; start -> score [cond=\"score>=600 && active==true\"]; start -> reject [cond=\"active==false\"]; score -> age [cond=\"segment==\\\"prime\\\"\"]; score -> review [cond=\"segment!=\\\"prime\\\" || score<700\"]; age -> reject [cond=\"age<18\"]; }",
+  "input": { "age": 20, "score": 720, "segment": "prime", "active": true }
+}
+
+### 4. Erro — input ausente (espera 400 invalid_input)
+POST {{host}}/infer
+Content-Type: application/json
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; }"
+}
+
+### 5. Erro — política inválida (espera 400 invalid_policy)
+POST {{host}}/infer
+Content-Type: application/json
+
+{
+  "policy_dot": "graph P { a -- b }",
+  "input": {}
+}
+
+### 6. Erro — variável não resolvida na condição (espera 400 inference_error)
+POST {{host}}/infer
+Content-Type: application/json
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; a [result=\"ok=true\"]; start -> a [cond=\"missing==1\"]; }",
+  "input": {}
+}
+
+### 7. Erro — method errado (espera 405 method_not_allowed)
+GET {{host}}/infer
+
+### 8. Erro — path errado (espera 404 not_found)
+POST {{host}}/other
+Content-Type: application/json
+
+{
+  "policy_dot": "digraph P { start [result=\"\"]; }",
+  "input": {}
+}

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Versioned pre-commit hook. Enable once per clone with:
+#   make install-hooks    (git config core.hooksPath scripts)
+set -e
+
+echo "pre-commit: gofmt"
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+	echo "unformatted files (run 'make fmt'):"
+	echo "$unformatted"
+	exit 1
+fi
+
+echo "pre-commit: go vet"
+go vet ./...
+
+echo "pre-commit: go test + coverage (minimum 90%)"
+make -s cover
+
+echo "pre-commit: swagger freshness"
+make -s swagger
+if ! git diff --quiet -- docs/swagger; then
+	echo "docs/swagger is out of date; run 'make swagger' and stage the result"
+	exit 1
+fi

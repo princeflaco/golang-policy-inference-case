@@ -1,0 +1,136 @@
+{
+    "schemes": [
+        "http"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Executes one deterministic path through a DOT policy graph and returns the enriched variables.",
+        "title": "Policy Inference API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/infer": {
+            "post": {
+                "description": "Validates the request, parses the DOT policy graph, executes a single path, and returns the enriched variables.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "inference"
+                ],
+                "summary": "Run one deterministic inference over a DOT policy",
+                "parameters": [
+                    {
+                        "description": "DOT policy and input variables",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.inferRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "input variables plus inferred values",
+                        "schema": {
+                            "$ref": "#/definitions/httpapi.inferResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_json, invalid_input, invalid_policy or inference_error",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "path is not /infer",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Error"
+                        }
+                    },
+                    "405": {
+                        "description": "method is not POST",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Error"
+                        }
+                    },
+                    "413": {
+                        "description": "request body exceeds the configured limit",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "unexpected internal failure",
+                        "schema": {
+                            "$ref": "#/definitions/apperr.Error"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "apperr.Code": {
+            "type": "string",
+            "enum": [
+                "invalid_json",
+                "invalid_input",
+                "invalid_policy",
+                "inference_error",
+                "request_too_large",
+                "method_not_allowed",
+                "not_found",
+                "internal_error"
+            ],
+            "x-enum-varnames": [
+                "InvalidJSON",
+                "InvalidInput",
+                "InvalidPolicy",
+                "InferenceError",
+                "TooLarge",
+                "MethodNotAllowed",
+                "NotFound",
+                "Internal"
+            ]
+        },
+        "apperr.Error": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "$ref": "#/definitions/apperr.Code"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "httpapi.inferRequest": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "object"
+                },
+                "policy_dot": {
+                    "type": "string",
+                    "example": "digraph P { start [result=\"\"]; ok [result=\"approved=true\"]; start -\u003e ok [cond=\"age\u003e=18\"] }"
+                }
+            }
+        },
+        "httpapi.inferResponse": {
+            "type": "object",
+            "properties": {
+                "output": {
+                    "type": "object"
+                }
+            }
+        }
+    }
+}

@@ -24,6 +24,7 @@ Resources:
             PayloadFormatVersion: '2.0'
       Environment:
         Variables:
+          LOG_LEVEL: 'info'
           MAX_BODY_BYTES: '1048576'
           MAX_POLICY_NODES: '1000'
           MAX_POLICY_EDGES: '5000'

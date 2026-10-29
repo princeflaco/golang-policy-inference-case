@@ -2,6 +2,7 @@ package policy
 
 import (
 	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
+	"math"
 	"reflect"
 	"strconv"
 	"testing"
@@ -560,6 +561,29 @@ func TestParseRejectsConditionsWithInvalidPolicyCode(t *testing.T) {
 			_, err := parse(`digraph P { start -> ok [cond=` + strconv.Quote(cond) + `] }`)
 			if apiErr := apperr.From(err); apiErr == nil || apiErr.Code != apperr.InvalidPolicy {
 				t.Fatalf("Parse() error = %v, want invalid_policy", err)
+			}
+		})
+	}
+}
+
+func TestInferRejectsInvalidInputWithInvalidInputCode(t *testing.T) {
+	p, err := parse(twoOutcomePolicy)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	for name, input := range map[string]map[string]any{
+		"bad key":      {"bad-key": true},
+		"nil value":    {"age": nil},
+		"object value": {"age": map[string]any{"v": 1.0}},
+		"list value":   {"age": []any{1.0}},
+		"int value":    {"age": 20},
+		"NaN":          {"age": math.NaN()},
+		"Inf":          {"age": math.Inf(1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := p.Infer(input)
+			if apiErr := apperr.From(err); apiErr == nil || apiErr.Code != apperr.InvalidInput {
+				t.Fatalf("Infer() error = %v, want invalid_input", err)
 			}
 		})
 	}

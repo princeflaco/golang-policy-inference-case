@@ -1,16 +1,10 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -165,136 +159,6 @@ func isJSONContentType(headers map[string]string) bool {
 		}
 	}
 	return false
-}
-
-func decodeRequest(body []byte) (string, map[string]any, error) {
-	if err := rejectDuplicateKeys(body); err != nil {
-		return "", nil, apperr.New(apperr.InvalidJSON, "%v", err)
-	}
-
-	var raw map[string]json.RawMessage
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := decoder.Decode(&raw); err != nil {
-		return "", nil, apperr.New(apperr.InvalidJSON, "request body must be a JSON object")
-	}
-	if decoder.More() {
-		return "", nil, apperr.New(apperr.InvalidJSON, "request body must contain one JSON value")
-	}
-	if _, ok := raw[fieldPolicyDot]; !ok {
-		return "", nil, apperr.New(apperr.InvalidJSON, "policy_dot is required")
-	}
-	if _, ok := raw[fieldInput]; !ok {
-		return "", nil, apperr.New(apperr.InvalidInput, "input is required")
-	}
-	if len(raw) != 2 {
-		return "", nil, apperr.New(apperr.InvalidJSON, "request must contain exactly policy_dot and input")
-	}
-
-	var policyDOT string
-	if err := json.Unmarshal(raw[fieldPolicyDot], &policyDOT); err != nil || strings.TrimSpace(policyDOT) == "" {
-		return "", nil, apperr.New(apperr.InvalidJSON, "policy_dot must be a non-empty string")
-	}
-
-	var rawInput map[string]json.RawMessage
-	if err := json.Unmarshal(raw[fieldInput], &rawInput); err != nil || rawInput == nil {
-		return "", nil, apperr.New(apperr.InvalidInput, "input must be a JSON object")
-	}
-
-	input := make(map[string]any, len(rawInput))
-	for key, rawValue := range rawInput {
-		if !policy.IsIdentifier(key) {
-			return "", nil, apperr.New(apperr.InvalidInput, "input key %q is not a valid identifier", key)
-		}
-		value, err := decodeInputValue(rawValue)
-		if err != nil {
-			return "", nil, apperr.New(apperr.InvalidInput, "input.%s: %v", key, err)
-		}
-		input[key] = value
-	}
-	return policyDOT, input, nil
-}
-
-func decodeInputValue(raw json.RawMessage) (any, error) {
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, errors.New("invalid JSON value")
-	}
-	switch typed := value.(type) {
-	case string, bool:
-		return typed, nil
-	case json.Number:
-		number, err := strconv.ParseFloat(typed.String(), 64)
-		if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
-			return nil, errors.New("number must be finite")
-		}
-		return number, nil
-	default:
-		return nil, errors.New("value must be a string, number, or boolean")
-	}
-}
-
-// rejectDuplicateKeys walks the JSON syntax without relying on map decoding,
-// because map decoding silently keeps the last duplicate key.
-func rejectDuplicateKeys(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := walkJSONValue(decoder); err != nil {
-		return err
-	}
-	var extra any
-	err := decoder.Decode(&extra)
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return errors.New("request must contain one JSON value")
-}
-
-func walkJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		seen := make(map[string]bool)
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return errors.New("object key must be a string")
-			}
-			if seen[key] {
-				return fmt.Errorf("duplicate JSON key %q", key)
-			}
-			seen[key] = true
-			if err := walkJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		_, err := decoder.Token()
-		return err
-	case '[':
-		for decoder.More() {
-			if err := walkJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		_, err := decoder.Token()
-		return err
-	default:
-		return errors.New("invalid JSON delimiter")
-	}
 }
 
 func errorResponse(status int, apiErr *apperr.Error) events.APIGatewayV2HTTPResponse {

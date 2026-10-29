@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,12 +17,25 @@ const (
 	attrResult    = "result"
 )
 
+// identifierPattern is the grammar shared by node names, input keys, and
+// assignment keys.
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// IsIdentifier reports whether name follows the identifier grammar shared by
-// node names, input keys, and assignment keys.
-func IsIdentifier(name string) bool {
-	return identifierPattern.MatchString(name)
+func validateInput(key string, value any) error {
+	if !identifierPattern.MatchString(key) {
+		return apperr.New(apperr.InvalidInput, "input key %q is not a valid identifier", key)
+	}
+	switch typed := value.(type) {
+	case string, bool:
+		return nil
+	case float64:
+		if math.IsInf(typed, 0) || math.IsNaN(typed) {
+			return apperr.New(apperr.InvalidInput, "input.%s: number must be finite", key)
+		}
+		return nil
+	default:
+		return apperr.New(apperr.InvalidInput, "input.%s: value must be a string, number, or boolean", key)
+	}
 }
 
 // NodeCount returns the number of nodes referenced by the policy graph.
@@ -217,11 +231,16 @@ func Parse(dot string, limits Limits) (*Policy, error) {
 
 // Infer executes one deterministic path and returns a new state. The input map
 // is not modified.
+//
+// Infer owns the input contract: keys must follow the identifier grammar and
+// values must be strings, finite float64 numbers, or booleans; violations are
+// apperr.InvalidInput. Failures while evaluating conditions are
+// apperr.InferenceError. No partial state is returned on error.
 func (p *Policy) Infer(input map[string]any) (map[string]any, error) {
 	state := make(map[string]any, len(input)+4)
 	for key, value := range input {
-		if !identifierPattern.MatchString(key) {
-			return nil, inferenceError("input key %q is not a valid identifier", key)
+		if err := validateInput(key, value); err != nil {
+			return nil, err
 		}
 		state[key] = value
 	}

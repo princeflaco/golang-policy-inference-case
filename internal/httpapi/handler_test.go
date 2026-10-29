@@ -269,6 +269,12 @@ func TestHandleRejectsHTTPContractViolations(t *testing.T) {
 		{"extra field", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{},"extra":true}`, 400, apperr.InvalidJSON},
 		{"missing input", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `}`, 400, apperr.InvalidInput},
 		{"policy type", "POST", "/infer", "application/json", `{"policy_dot":123,"input":{}}`, 400, apperr.InvalidJSON},
+		{"nested duplicate key", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{"age":1,"age":2}}`, 400, apperr.InvalidJSON},
+		{"trailing value", "POST", "/infer", "application/json", validPayload + `{}`, 400, apperr.InvalidJSON},
+		{"top-level array", "POST", "/infer", "application/json", `[1]`, 400, apperr.InvalidJSON},
+		{"empty body", "POST", "/infer", "application/json", ``, 400, apperr.InvalidJSON},
+		{"input not object", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":[1]}`, 400, apperr.InvalidInput},
+		{"non-finite number", "POST", "/infer", "application/json", `{"policy_dot":` + string(policyJSON) + `,"input":{"age":1e999}}`, 400, apperr.InvalidInput},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

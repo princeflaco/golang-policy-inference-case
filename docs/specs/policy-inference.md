@@ -2,7 +2,7 @@
 
 Status: R0–R7 concluídas. POST /infer funciona localmente via SAM e container Lambda; testes, limites, logging, benchmark e carga HTTP local foram verificados. Backlog publicado nas issues #1–#9.
 
-Esta spec registra o contrato acordado para o [case original](../../README.md).
+Esta spec registra o contrato acordado para o [case original](../enunciado.md).
 Os termos do domínio estão no [glossário](../../GLOSSARY.md).
 Pendências de detalhamento estão na seção 9; não são decisões implícitas.
 
@@ -184,7 +184,7 @@ a inferência. DOT descreve a estrutura; não avalia `cond` nem executa `result`
 | `>`, `<`, `>=`, `<=` | Comparar somente números |
 | `&&`, `\|\|` | Operandos booleanos e curto-circuito da esquerda para a direita |
 | Parênteses | Alterar agrupamento |
-| Precedência | Comparações antes de `&&`; `&&` antes de `||` |
+| Precedência | Comparações antes de `&&`; `&&` antes de `\|\|` |
 | Identificadores | Referenciar variáveis ou avaliar booleanos diretamente |
 | Strings entre aspas duplas | Representar textos literais |
 | `true`, `false` e números | Representar literais e podem formar uma condição booleana |

@@ -60,5 +60,6 @@ Depois do fechamento de R0–R7, uma etapa de consolidação e tooling:
 
 - [Spec e plano](specs/policy-inference.md) — contrato, critérios de aceite e
   detalhamento dos incrementos
+- [Enunciado original](enunciado.md) — o case preservado fora do README
 - [Relatório de performance](reports/performance.md) — medições e limitações
 - [Glossário](../GLOSSARY.md) — vocabulário do domínio

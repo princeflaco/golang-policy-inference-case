@@ -1,45 +1,45 @@
-# Performance report
+# Relatório de performance
 
-Date: 2026-10-29 · Branch: `feature/policy-inference`
+Data: 2026-10-29 · Branch: `feature/policy-inference`
 
-## Environment
+## Ambiente
 
 - CPU: AMD Ryzen 5 5500 · go1.26.4 windows/amd64
-- All measurements are **local** (engine micro-benchmarks + in-process
-  `httptest` HTTP server). They measure engine + transport, not AWS Lambda
-  cold start, not API Gateway, and not `sam local` container overhead.
+- Todas as medições são **locais** (micro-benchmarks do motor + servidor HTTP
+  `httptest` em processo). Medem motor + transporte, não cold start de AWS
+  Lambda, não API Gateway e não o custo de containers do `sam local`.
 
-## Workload
+## Carga de trabalho
 
-Medium policy (see `internal/policy/policy_bench_test.go`): 5 nodes, 6 edges,
-mixed conditions (`>=`, `==`, `&&`/`||`), 4 input variables (`age`, `score`,
-`segment`, `active`).
+Política média (ver `internal/policy/policy_bench_test.go`): 5 nós, 6 arestas,
+condições mistas (`>=`, `==`, `&&`/`||`), 4 variáveis de entrada (`age`,
+`score`, `segment`, `active`).
 
-## Methodology
+## Metodologia
 
 ```bash
-# Micro-benchmarks, 3 repetitions, allocation stats
+# Micro-benchmarks, 3 repetições, estatísticas de alocação
 go test -run '^$' -bench . -benchmem -count=3 ./internal/policy
 
-# HTTP load: 50 RPS offered, 10s warmup + 60s measurement
-go test -run TestHTTPLoad -load ./internal/httpapi -v   # or: make load-test
+# Carga HTTP: 50 RPS ofertados, 10 s de aquecimento + 60 s de medição
+go test -run TestHTTPLoad -load ./internal/httpapi -v   # ou: make load-test
 ```
 
-## Results — engine benchmarks (median of 3 runs)
+## Resultados — benchmarks do motor (mediana de 3 execuções)
 
-| Operation | ns/op | B/op | allocs/op |
+| Operação | ns/op | B/op | alocações/op |
 | --- | ---: | ---: | ---: |
-| `Parse` (medium policy) | ~40 558 | 21 772 | 428 |
+| `Parse` (política média) | ~40 558 | 21 772 | 428 |
 | `Infer` | ~1 096 | 368 | 5 |
 | `Parse + Infer` | ~38 743 | 22 140 | 433 |
 
-Reading: inference is ~37× cheaper than parsing (1 µs vs 40 µs). A service
-that re-parses the same policy per request spends ~97% of its CPU in the
-parser — a `policy → *Policy` cache keyed by content hash is the highest-value
-optimization if policies repeat across invocations. `Infer` itself allocates
-only 5 objects per call (the output map and entries).
+Leitura: inferência é ~37× mais barata que parsing (1 µs vs 40 µs). Um serviço
+que re-parseia a mesma política a cada requisição gasta ~97% da CPU no parser —
+um cache `policy → *Policy` indexado por hash do conteúdo é a otimização de
+maior valor se políticas se repetem entre invocações. `Infer` em si aloca
+apenas 5 objetos por chamada (o mapa de saída e suas entradas).
 
-## Results — HTTP load test (50 RPS, 60 s)
+## Resultados — teste de carga HTTP (50 RPS, 60 s)
 
 ```json
 {
@@ -56,35 +56,35 @@ only 5 objects per call (the output map and entries).
 }
 ```
 
-| Metric | Value | Target | Result |
+| Métrica | Valor | Meta | Resultado |
 | --- | ---: | ---: | --- |
-| Offered → achieved RPS | 50 → 49.9999 | sustain 50 | pass |
-| Errors / non-200 | 0 / 0 | 0 | pass |
-| P90 latency | 0.874 ms | < 30 ms | pass (34× headroom) |
-| Max latency | 5.85 ms | — | pass |
+| RPS ofertado → alcançado | 50 → 49,9999 | sustentar 50 | passou |
+| Erros / não-200 | 0 / 0 | 0 | passou |
+| Latência P90 | 0,874 ms | < 30 ms | passou (~34× de folga) |
+| Latência máxima | 5,85 ms | — | passou |
 
-## Caveats
+## Ressalvas
 
-- **Not Lambda performance.** These numbers exclude container cold start,
-  Lambda runtime init, and API Gateway hops. The earlier attempt to measure
-  through `sam local start-api` produced invalid data: default mode spawns
-  one `rapid-x86_64` container per invocation and saturated the local Docker
-  daemon (~1 900 containers, timeouts/502s). Any future SAM-based run must use
-  `sam local start-api --warm-containers EAGER` (`make sam-local`).
-- Latency is dominated by HTTP round-trip + JSON decode; at 1.1 µs of engine
-  work, `Infer` is not the bottleneck — per-request `Parse` is.
+- **Não é performance de Lambda.** Os números excluem cold start de container,
+  init do runtime Lambda e saltos do API Gateway. A tentativa anterior de
+  medir através do `sam local start-api` produziu dados inválidos: o modo
+  padrão cria um container `rapid-x86_64` por invocação e saturou o daemon
+  Docker local (~1 900 containers, timeouts/502). Qualquer medição futura via
+  SAM deve usar `sam local start-api --warm-containers EAGER` (`make sam-local`).
+- A latência é dominada pelo round-trip HTTP + decode do JSON; com 1,1 µs de
+  trabalho do motor, `Infer` não é o gargalo — o `Parse` por requisição é.
 
-## Results — containerised k6 run (neutral environment)
+## Resultados — execução k6 containerizada (ambiente neutro)
 
-App runs in a distroless container (`tools/perf/Dockerfile`, `HTTP_ADDR=:8080`,
-same binary as the Lambda image); the load generator is `grafana/k6` in a
-separate container. Reproduce with `make perf-container`.
+A aplicação roda em container distroless (`tools/perf/Dockerfile`,
+`HTTP_ADDR=:8080`, mesmo binário da imagem Lambda); o gerador de carga é
+`grafana/k6` em container separado. Reproduzir com `make perf-container`.
 
-- 10 s warmup + 60 s measurement at 50 iterations/s (constant-arrival-rate)
-- 3 502 requests, 0 failures, 100% checks passed
-- http_req_duration: avg 2.15 ms, med 2.04 ms, **p(90) 2.56 ms**, p(95) 2.8 ms, max 15.87 ms
-- Thresholds met: `http_req_failed rate==0`, `p(90)<30`
+- 10 s de aquecimento + 60 s de medição a 50 iterações/s (constant-arrival-rate)
+- 3 502 requisições, 0 falhas, 100% dos checks aprovados
+- http_req_duration: média 2,15 ms, mediana 2,04 ms, **p(90) 2,56 ms**, p(95) 2,8 ms, máx 15,87 ms
+- Thresholds atendidos: `http_req_failed rate==0`, `p(90)<30`
 
-This is the closest neutral measurement available locally: Linux container,
-isolated process, external load tool — still excluding Lambda cold start and
-API Gateway hops.
+É a medição neutra mais próxima disponível localmente: container Linux,
+processo isolado, ferramenta de carga externa — ainda excluindo cold start de
+Lambda e saltos do API Gateway.

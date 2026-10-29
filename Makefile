@@ -73,13 +73,22 @@ clean:
 	rm -rf build
 
 # Neutral-environment perf run: app in a distroless container, k6 as the
-# load generator. App and generator are separate containers.
+# load generator. App and generator are separate containers. Each
+# POLICY_SHAPES entry is one warmup+measure phase (medium and complex by
+# default; override with e.g. `make perf-container POLICY_SHAPES=complex`).
+POLICY_SHAPES ?= medium complex
+
 perf-container:
 	docker build -f tools/perf/Dockerfile -t policy-inference-perf .
 	-docker rm -f perf-app
 	docker run -d --name perf-app -p 8080:8080 policy-inference-perf
 	sleep 2
-	docker run --rm -i --add-host=host.docker.internal:host-gateway 		-e BASE_URL=http://host.docker.internal:8080 		grafana/k6 run - < tools/perf/k6.js
+	for shape in $(POLICY_SHAPES); do \
+		docker run --rm -i --add-host=host.docker.internal:host-gateway \
+			-e BASE_URL=http://host.docker.internal:8080 \
+			-e POLICY_SHAPE=$$shape \
+			grafana/k6 run - < tools/perf/k6.js; \
+	done
 	-docker rm -f perf-app
 
 # Plain HTTP server mode. Flags keep the recipe portable: env prefixes like

@@ -4,18 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 )
+
+// load gates the ~70-second HTTP measurement behind an explicit opt-in:
+// `go test -run TestHTTPLoad -load ./internal/httpapi` (see `make load-test`).
+var load = flag.Bool("load", false, "run the HTTP load measurement")
 
 const loadPolicyDOT = `digraph P {
 	start [result="tier=base"]
@@ -42,8 +46,8 @@ func TestHTTPLoadMediumPolicy(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer slog.SetDefault(previousLogger)
 
-	if os.Getenv("POLICY_INFER_LOAD_TEST") != "1" {
-		t.Skip("set POLICY_INFER_LOAD_TEST=1 to run the 70-second HTTP load measurement")
+	if !*load {
+		t.Skip("pass -load to run the 70-second HTTP load measurement")
 	}
 
 	payload, err := json.Marshal(map[string]any{

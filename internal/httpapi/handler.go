@@ -1,15 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/princeflaco/golang-policy-inference-case/internal/apperr"
-	"github.com/princeflaco/golang-policy-inference-case/internal/config"
 	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
 	"github.com/princeflaco/golang-policy-inference-case/internal/policy"
 )
@@ -47,12 +46,8 @@ var statusByCode = map[apperr.Code]int{
 	apperr.Internal:         http.StatusInternalServerError,
 }
 
-// Handle is the request pipeline: correlation id, request logging, then the
-// inference handler itself.
-var Handle = Chain(core, CorrelationID(), RequestLogging())
-
-// core translates an API Gateway HTTP API v2 request into a policy
-// inference. It intentionally contains no policy evaluation rules.
+// inferHandler validates the request and runs one policy inference. It
+// intentionally contains no policy evaluation rules.
 //
 //	@Summary		Run one deterministic inference over a DOT policy
 //	@Description	Validates the request, parses the DOT policy graph, executes a single path, and returns the enriched variables.
@@ -67,67 +62,75 @@ var Handle = Chain(core, CorrelationID(), RequestLogging())
 //	@Failure		413		{object}	apperr.Error	"request body exceeds the configured limit"
 //	@Failure		500		{object}	apperr.Error	"unexpected internal failure"
 //	@Router			/infer [post]
-func core(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	cfg, err := config.Load(nil)
-	if err != nil {
-		observability.Logger(ctx).Error("invalid configuration", "error", err)
-		return fail(ctx, apperr.New(apperr.Internal, "invalid configuration"))
-	}
+func inferHandler(settings Settings) Handler {
+	return func(ctx context.Context, request Request) Response {
+		if request.Method != http.MethodPost {
+			return fail(ctx, apperr.New(apperr.MethodNotAllowed, "method must be POST"))
+		}
+		if request.Path != inferPath {
+			return fail(ctx, apperr.New(apperr.NotFound, "path must be /infer"))
+		}
+		if !isJSONContentType(request.Headers) {
+			return fail(ctx, apperr.New(apperr.InvalidJSON, "Content-Type must be application/json"))
+		}
 
-	if request.RequestContext.HTTP.Method != http.MethodPost {
-		return fail(ctx, apperr.New(apperr.MethodNotAllowed, "method must be POST"))
-	}
-	path := request.RawPath
-	if stage := request.RequestContext.Stage; stage != "" {
-		path = strings.TrimPrefix(path, "/"+stage)
-	}
-	if path != inferPath {
-		return fail(ctx, apperr.New(apperr.NotFound, "path must be /infer"))
-	}
-	if !isJSONContentType(request.Headers) {
-		return fail(ctx, apperr.New(apperr.InvalidJSON, "Content-Type must be application/json"))
-	}
+		body, err := readBody(request.Body, settings.MaxBodyBytes)
+		if err != nil {
+			return fail(ctx, err)
+		}
 
-	body, err := requestBody(request)
-	if err != nil {
-		return fail(ctx, err)
-	}
-	if len(body) > cfg.MaxBodyBytes {
-		return fail(ctx, apperr.New(apperr.TooLarge, "request body exceeds the configured limit"))
-	}
+		policyDOT, input, err := decodeRequest(body)
+		if err != nil {
+			return fail(ctx, err)
+		}
 
-	policyDOT, input, err := decodeRequest(body)
-	if err != nil {
-		return fail(ctx, err)
-	}
+		_, parseSpan := observability.StartSpan(ctx, "policy.parse")
+		parsed, err := policy.Parse(policyDOT, settings.Limits)
+		parseSpan.End()
+		if err != nil {
+			return fail(ctx, err)
+		}
+		observability.Logger(ctx).Info("policy parsed", "nodes", parsed.NodeCount(), "edges", parsed.EdgeCount())
 
-	_, parseSpan := observability.StartSpan(ctx, "policy.parse")
-	parsed, err := policy.Parse(policyDOT, cfg.Limits())
-	parseSpan.End()
-	if err != nil {
-		return fail(ctx, err)
-	}
-	observability.Logger(ctx).Info("policy parsed", "nodes", parsed.NodeCount(), "edges", parsed.EdgeCount())
+		_, inferSpan := observability.StartSpan(ctx, "policy.infer")
+		output, err := parsed.Infer(input)
+		inferSpan.End()
+		if err != nil {
+			return fail(ctx, err)
+		}
+		observability.Logger(ctx).Info("inference completed", "input_vars", len(input), "output_vars", len(output))
 
-	_, inferSpan := observability.StartSpan(ctx, "policy.infer")
-	output, err := parsed.Infer(input)
-	inferSpan.End()
-	if err != nil {
-		return fail(ctx, err)
+		payload, err := json.Marshal(inferResponse{Output: output})
+		if err != nil {
+			return fail(ctx, apperr.New(apperr.Internal, "failed to encode response"))
+		}
+		return jsonResponse(http.StatusOK, payload)
 	}
-	observability.Logger(ctx).Info("inference completed", "input_vars", len(input), "output_vars", len(output))
+}
 
-	payload, err := json.Marshal(inferResponse{Output: output})
-	if err != nil {
-		return fail(ctx, apperr.New(apperr.Internal, "failed to encode response"))
+// readBody reads at most limit+1 bytes, so memory stays bounded while an
+// oversized body is still detected.
+func readBody(body io.Reader, limit int) ([]byte, error) {
+	if body == nil {
+		body = bytes.NewReader(nil)
 	}
-	return jsonResponse(http.StatusOK, payload), nil
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
+	if err != nil {
+		if apperr.From(err) == nil {
+			err = apperr.New(apperr.InvalidJSON, "request body could not be read")
+		}
+		return nil, err
+	}
+	if len(data) > limit {
+		return nil, apperr.New(apperr.TooLarge, "request body exceeds the configured limit")
+	}
+	return data, nil
 }
 
 // fail converts a coded error into the wire response. Uncoded errors are
 // unexpected: they are logged and collapsed into internal_error so
 // implementation details never leak to the client.
-func fail(ctx context.Context, err error) (events.APIGatewayV2HTTPResponse, error) {
+func fail(ctx context.Context, err error) Response {
 	apiErr := apperr.From(err)
 	if apiErr == nil {
 		observability.Logger(ctx).Error("unexpected error", "error", err)
@@ -137,39 +140,21 @@ func fail(ctx context.Context, err error) (events.APIGatewayV2HTTPResponse, erro
 	if !ok {
 		status = http.StatusInternalServerError
 	}
-	return errorResponse(status, apiErr), nil
-}
-
-func requestBody(request events.APIGatewayV2HTTPRequest) ([]byte, error) {
-	if !request.IsBase64Encoded {
-		return []byte(request.Body), nil
-	}
-	body, err := base64.StdEncoding.DecodeString(request.Body)
-	if err != nil {
-		return nil, apperr.New(apperr.InvalidJSON, "request body is not valid base64")
-	}
-	return body, nil
+	payload, _ := json.Marshal(apiErr)
+	response := jsonResponse(status, payload)
+	response.Code = apiErr.Code
+	return response
 }
 
 func isJSONContentType(headers map[string]string) bool {
-	for key, value := range headers {
-		if strings.EqualFold(key, headerContentType) {
-			mediaType := strings.TrimSpace(strings.Split(value, ";")[0])
-			return strings.EqualFold(mediaType, jsonMediaType)
-		}
-	}
-	return false
+	mediaType := strings.TrimSpace(strings.Split(headers[headerContentType], ";")[0])
+	return strings.EqualFold(mediaType, jsonMediaType)
 }
 
-func errorResponse(status int, apiErr *apperr.Error) events.APIGatewayV2HTTPResponse {
-	payload, _ := json.Marshal(apiErr)
-	return jsonResponse(status, payload)
-}
-
-func jsonResponse(status int, payload []byte) events.APIGatewayV2HTTPResponse {
-	return events.APIGatewayV2HTTPResponse{
-		StatusCode: status,
-		Headers:    map[string]string{"Content-Type": "application/json"},
-		Body:       string(payload),
+func jsonResponse(status int, payload []byte) Response {
+	return Response{
+		Status:  status,
+		Headers: map[string]string{"Content-Type": jsonMediaType},
+		Body:    payload,
 	}
 }

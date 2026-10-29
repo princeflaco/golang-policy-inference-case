@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
+	"github.com/princeflaco/golang-policy-inference-case/internal/observability"
 )
 
 // load gates the ~70-second HTTP measurement behind an explicit opt-in:
@@ -42,10 +43,6 @@ type loadResult struct {
 }
 
 func TestHTTPLoadMediumPolicy(t *testing.T) {
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	defer slog.SetDefault(previousLogger)
-
 	if !*load {
 		t.Skip("pass -load to run the 70-second HTTP load measurement")
 	}
@@ -63,36 +60,13 @@ func TestHTTPLoadMediumPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		response, err := Handle(request.Context(), events.APIGatewayV2HTTPRequest{
-			RawPath: request.URL.Path,
-			Headers: map[string]string{"Content-Type": request.Header.Get("Content-Type")},
-			Body:    string(body),
-			RequestContext: events.APIGatewayV2HTTPRequestContext{
-				HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{
-					Method:    request.Method,
-					Path:      request.URL.Path,
-					Protocol:  request.Proto,
-					SourceIP:  request.RemoteAddr,
-					UserAgent: request.UserAgent(),
-				},
-			},
-		})
-		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		for key, value := range response.Headers {
-			writer.Header().Set(key, value)
-		}
-		writer.WriteHeader(response.StatusCode)
-		_, _ = writer.Write([]byte(response.Body))
-	}))
+	// The measurement drives the production net/http adapter; logs are
+	// discarded through the request context instead of global state.
+	server := httptest.NewUnstartedServer(newService(t, defaultSettings()))
+	server.Config.BaseContext = func(net.Listener) context.Context {
+		return observability.WithLogger(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
+	server.Start()
 	defer server.Close()
 
 	client := &http.Client{

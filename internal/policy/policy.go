@@ -60,7 +60,13 @@ type edge struct {
 }
 
 // Parse converts the approved subset of DOT into an executable policy.
-func Parse(dot string) (*Policy, error) {
+// Limits default to LimitsFromEnv and may be overridden with Options.
+func Parse(dot string, opts ...Option) (*Policy, error) {
+	limits := LimitsFromEnv()
+	for _, opt := range opts {
+		opt(&limits)
+	}
+
 	file, err := godot.ParseString(dot)
 	if err != nil {
 		return nil, invalidPolicy("invalid DOT: %v", err)
@@ -83,8 +89,8 @@ func Parse(dot string) (*Policy, error) {
 			edgeCount++
 		}
 	}
-	if edgeCount > maxPolicyEdges() {
-		return nil, invalidPolicy("policy has %d edges; limit is %d", edgeCount, maxPolicyEdges())
+	if edgeCount > limits.MaxPolicyEdges {
+		return nil, invalidPolicy("policy has %d edges; limit is %d", edgeCount, limits.MaxPolicyEdges)
 	}
 
 	getNode := func(name string) *node {
@@ -112,8 +118,8 @@ func Parse(dot string) (*Policy, error) {
 				return nil, err
 			}
 			n := getNode(name)
-			if len(p.nodes) > maxPolicyNodes() {
-				return nil, invalidPolicy("policy has more than %d nodes", maxPolicyNodes())
+			if len(p.nodes) > limits.MaxPolicyNodes {
+				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
 			}
 			for _, attr := range s.Attrs {
 				if attr.Key != "result" {
@@ -170,18 +176,18 @@ func Parse(dot string) (*Policy, error) {
 			if err != nil {
 				return nil, invalidPolicy("edge %q -> %q has invalid cond: %v", from, to, err)
 			}
-			if len(rawCond) > maxConditionBytes() {
-				return nil, invalidPolicy("edge %q -> %q cond exceeds %d bytes", from, to, maxConditionBytes())
+			if len(rawCond) > limits.MaxConditionBytes {
+				return nil, invalidPolicy("edge %q -> %q cond exceeds %d bytes", from, to, limits.MaxConditionBytes)
 			}
-			expr, err := parseCondition(rawCond)
+			expr, err := parseCondition(rawCond, limits.MaxExpressionDepth)
 			if err != nil {
 				return nil, invalidPolicy("edge %q -> %q has invalid cond: %v", from, to, err)
 			}
 
 			getNode(to)
 			fromNode := getNode(from)
-			if len(p.nodes) > maxPolicyNodes() {
-				return nil, invalidPolicy("policy has more than %d nodes", maxPolicyNodes())
+			if len(p.nodes) > limits.MaxPolicyNodes {
+				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
 			}
 			fromNode.edges = append(fromNode.edges, &edge{to: to, expr: expr})
 

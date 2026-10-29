@@ -1,0 +1,51 @@
+GO        ?= go
+GOFLAGS   ?=
+BINARY    := build/infer
+SAM       ?= sam
+
+.PHONY: all fmt test test-race vet build build-lambda bench load-test docker-build sam-build sam-local clean
+
+all: fmt vet test build
+
+fmt:
+	$(GO) fmt ./...
+
+test:
+	$(GO) test ./...
+
+test-race:
+	$(GO) test -race ./...
+
+vet:
+	$(GO) vet ./...
+
+build:
+	$(GO) build -o $(BINARY) ./cmd/infer
+
+# Artifact expected by the Lambda container image (linux/amd64, static).
+build-lambda:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -o $(BINARY) ./cmd/infer
+
+# CPU/allocation micro-benchmarks for Parse, Infer and Parse+Infer.
+bench:
+	$(GO) test -run '^$$' -bench . -benchmem ./internal/policy
+
+# HTTP load test: 50 RPS, 10s warmup + 60s measurement via httptest.
+# Requires POLICY_INFER_LOAD_TEST=1; safe (no Docker containers are spawned).
+load-test:
+	POLICY_INFER_LOAD_TEST=1 $(GO) test -run TestHTTPLoad ./internal/httpapi -v
+
+docker-build:
+	docker build -t policy-inference .
+
+sam-build:
+	$(SAM) build
+
+# Prefer --warm-containers EAGER under load: default mode spawns one
+# container per invocation and can saturate the local Docker daemon.
+sam-local:
+	$(SAM) local start-api --warm-containers EAGER
+
+clean:
+	$(GO) clean
+	rm -rf build

@@ -517,3 +517,21 @@ func TestParseResultAcceptsDigitLeadingSimpleStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestParseWithLimitsOption(t *testing.T) {
+	dot := `digraph P {
+		start [result=""]
+		a [result="ok=true"]
+		b [result="ok=false"]
+		start -> a [cond="1==1"]
+		a -> b [cond="1==1"]
+	}`
+	permissive := Limits{MaxPolicyNodes: 10, MaxPolicyEdges: 10, MaxConditionBytes: 10, MaxExpressionDepth: 10}
+	if _, err := Parse(dot, WithLimits(permissive)); err != nil {
+		t.Fatalf("Parse() with permissive limits error = %v", err)
+	}
+	strict := Limits{MaxPolicyNodes: 2, MaxPolicyEdges: 10, MaxConditionBytes: 10, MaxExpressionDepth: 10}
+	if _, err := Parse(dot, WithLimits(strict)); err == nil {
+		t.Fatal("Parse() with MaxPolicyNodes=2 unexpectedly succeeded")
+	}
+}

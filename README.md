@@ -342,3 +342,9 @@ Essas medições não são medições AWS Lambda. A tentativa anterior de carga 
 - `cmd/infer`: entrypoint Lambda.
 - `Dockerfile` e `template.yaml`: imagem Lambda e execução local com SAM.
 - `internal/policy/policy_bench_test.go` e `internal/httpapi/handler_load_test.go`: evidências de desempenho.
+
+## Análise de design e performance
+
+- **Relatório de design patterns**: `docs/reports/design-patterns.md` — mapeia onde cada padrão se encaixa e documenta o padrão implementado (*Functional Options* para limites do `policy.Parse`, ex.: `policy.Parse(dot, policy.WithLimits(l))`).
+- **Relatório de performance**: `docs/reports/performance.md` — metodologia, ambiente, benchmarks do motor e teste de carga HTTP real (50 RPS, P90 ~0,87 ms).
+- **Makefile**: alvos `test`, `test-race`, `vet`, `build`, `build-lambda`, `bench`, `load-test`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.

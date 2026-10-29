@@ -13,13 +13,13 @@ import (
 
 var numberPattern = regexp.MustCompile(`^-?[0-9]+(?:\.[0-9]+)?$`)
 
-func parseCondition(raw string) (ast.Expr, error) {
+func parseCondition(raw string, maxDepth int) (ast.Expr, error) {
 	expr, err := goparser.ParseExpr(raw)
 	if err != nil {
 		return nil, err
 	}
-	if depth := expressionDepth(expr); depth > maxExpressionDepth() {
-		return nil, fmt.Errorf("expression depth %d exceeds limit %d", depth, maxExpressionDepth())
+	if depth := expressionDepth(expr); depth > maxDepth {
+		return nil, fmt.Errorf("expression depth %d exceeds limit %d", depth, maxDepth)
 	}
 	if err := validateCondition(expr); err != nil {
 		return nil, err

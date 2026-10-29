@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -275,39 +274,6 @@ func rejectDuplicateAttrs(attrs []*gvast.Attr) error {
 		seen[attr.Key] = true
 	}
 	return nil
-}
-
-func dotAttrValue(raw string) (string, error) {
-	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
-		return raw, nil
-	}
-	inner := raw[1 : len(raw)-1]
-	var value strings.Builder
-	for i := 0; i < len(inner); i++ {
-		if inner[i] != '\\' {
-			value.WriteByte(inner[i])
-			continue
-		}
-		i++
-		if i >= len(inner) {
-			return "", fmt.Errorf("unterminated escape in DOT value %q", raw)
-		}
-		var decoded byte
-		switch inner[i] {
-		case '"':
-			decoded = '"'
-		case '\\':
-			decoded = '\\'
-		case 'n':
-			decoded = '\n'
-		case 't':
-			decoded = '\t'
-		default:
-			return "", fmt.Errorf("unsupported escape \\%c in DOT value", inner[i])
-		}
-		value.WriteByte(decoded)
-	}
-	return value.String(), nil
 }
 
 func hasCycle(nodes map[string]*node) bool {

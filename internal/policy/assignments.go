@@ -1,9 +1,7 @@
 package policy
 
 import (
-	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -15,9 +13,9 @@ func parseResult(raw string) ([]assignment, error) {
 		return nil, nil
 	}
 
-	parts, err := splitAssignments(trimmed)
+	parts, err := splitOutsideQuotes(trimmed, ',', -1)
 	if err != nil {
-		return nil, err
+		return nil, invalidPolicy("invalid result: %v", err)
 	}
 	assignments := make([]assignment, 0, len(parts))
 	seen := make(map[string]bool, len(parts))
@@ -43,62 +41,16 @@ func parseResult(raw string) ([]assignment, error) {
 	return assignments, nil
 }
 
-func splitAssignments(raw string) ([]string, error) {
-	var parts []string
-	start := 0
-	inString := false
-	escaped := false
-	for i, r := range raw {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if inString && r == '\\' {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-		if r == ',' && !inString {
-			parts = append(parts, raw[start:i])
-			start = i + 1
-		}
-	}
-	if inString || escaped {
-		return nil, invalidPolicy("unterminated quoted string in result")
-	}
-	parts = append(parts, raw[start:])
-	return parts, nil
-}
-
 func splitAssignment(raw string) (string, string, error) {
-	inString := false
-	escaped := false
-	for i, r := range raw {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if inString && r == '\\' {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-		if r == '=' && !inString {
-			key := strings.TrimSpace(raw[:i])
-			literal := strings.TrimSpace(raw[i+1:])
-			if key == "" || literal == "" {
-				return "", "", invalidPolicy("invalid assignment %q", strings.TrimSpace(raw))
-			}
-			return key, literal, nil
-		}
+	sides, err := splitOutsideQuotes(raw, '=', 2)
+	if err != nil || len(sides) != 2 {
+		return "", "", invalidPolicy("invalid assignment %q", strings.TrimSpace(raw))
 	}
-	return "", "", invalidPolicy("invalid assignment %q", strings.TrimSpace(raw))
+	key, literal := strings.TrimSpace(sides[0]), strings.TrimSpace(sides[1])
+	if key == "" || literal == "" {
+		return "", "", invalidPolicy("invalid assignment %q", strings.TrimSpace(raw))
+	}
+	return key, literal, nil
 }
 
 func parseAssignmentLiteral(literal string) (any, error) {
@@ -129,31 +81,6 @@ func parseAssignmentLiteral(literal string) (any, error) {
 		return literal, nil
 	}
 	return nil, invalidPolicy("invalid assignment literal %q", literal)
-}
-
-func unquotePolicyString(literal string) (string, error) {
-	if len(literal) < 2 || literal[0] != '"' || literal[len(literal)-1] != '"' {
-		return "", fmt.Errorf("string literal must be quoted")
-	}
-	for i := 1; i < len(literal)-1; i++ {
-		if literal[i] != '\\' {
-			continue
-		}
-		i++
-		if i >= len(literal)-1 {
-			return "", fmt.Errorf("unterminated escape")
-		}
-		switch literal[i] {
-		case '"', '\\', 'n', 't':
-		default:
-			return "", fmt.Errorf("unsupported escape \\%c", literal[i])
-		}
-	}
-	value, err := strconv.Unquote(literal)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
 }
 
 func looksLikeNumber(literal string) bool {

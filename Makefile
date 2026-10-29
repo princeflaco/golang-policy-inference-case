@@ -2,8 +2,10 @@ GO        ?= go
 GOFLAGS   ?=
 BINARY    := build/infer
 SAM       ?= sam
+COVER_MIN ?= 90
+COVER_PKGS := ./cmd/...,./internal/...
 
-.PHONY: all fmt test test-race vet build build-lambda bench load-test perf-container \
+.PHONY: all fmt test test-race vet cover build build-lambda bench load-test perf-container \
 	run debug swagger install-hooks check docker-build sam-build sam-local clean help
 
 all: fmt vet test build
@@ -11,6 +13,7 @@ all: fmt vet test build
 # List of available targets (portable; no shell tools required).
 help:
 	@echo fmt vet test test-race check  - formatting, vet, unit tests
+	@echo cover                         - total coverage, fails below COVER_MIN=$(COVER_MIN)%
 	@echo build build-lambda            - local binary and linux/amd64 Lambda binary
 	@echo run debug                     - local HTTP server; debug also sets log level debug
 	@echo bench load-test perf-container- performance evidence
@@ -29,8 +32,14 @@ test-race:
 vet:
 	$(GO) vet ./...
 
+# Statement coverage across cmd/ and internal/ (generated docs/swagger is
+# excluded); fails when the total drops below COVER_MIN percent.
+cover:
+	$(GO) test -coverpkg=$(COVER_PKGS) -coverprofile=coverage.out ./cmd/... ./internal/...
+	@$(GO) tool cover -func=coverage.out | awk -v min=$(COVER_MIN) '/^total:/ { sub("%", "", $$3); printf "total coverage: %s%% (minimum %s%%)\n", $$3, min; exit ($$3 + 0 < min) }'
+
 # Full local verification before committing.
-check: fmt vet test
+check: fmt vet cover
 
 build:
 	$(GO) build -o $(BINARY) ./cmd/infer

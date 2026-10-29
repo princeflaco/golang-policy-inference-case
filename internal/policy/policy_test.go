@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -586,5 +587,72 @@ func TestInferRejectsInvalidInputWithInvalidInputCode(t *testing.T) {
 				t.Fatalf("Infer() error = %v, want invalid_input", err)
 			}
 		})
+	}
+}
+
+func TestParseAcceptsUnquotedDOTValues(t *testing.T) {
+	p, err := parse(`digraph P { start -> next [cond=true] next [result="reached=true"] }`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	got, err := p.Infer(nil)
+	if err != nil {
+		t.Fatalf("Infer() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, map[string]any{"reached": true}) {
+		t.Fatalf("Infer() = %#v", got)
+	}
+}
+
+func TestParseRejectsMoreInvalidForms(t *testing.T) {
+	tooBig := "1" + strings.Repeat("0", 400)
+	for name, dot := range map[string]string{
+		"two graphs":                `digraph A { start } digraph B { start }`,
+		"quoted node id":            `digraph P { "no 1" -> start [cond="true"] }`,
+		"unicode identifier":        `digraph P { start -> ok [cond="ação>1"] }`,
+		"composite literal":         `digraph P { start -> ok [cond="T{1}==1"] }`,
+		"overflowing number":        `digraph P { start -> ok [cond="x>` + tooBig + `"] }`,
+		"overflowing assignment":    `digraph P { start [result="x=` + tooBig + `"] }`,
+		"unsupported binary op":     `digraph P { start -> ok [cond="a&b"] }`,
+		"char literal":              `digraph P { start -> ok [cond="x=='a'"] }`,
+		"unary not minus":           `digraph P { start -> ok [cond="x==+1"] }`,
+		"result with bad escape":    `digraph P { start [result="x=\"a\qb\""] }`,
+		"cond with dangling escape": "digraph P { start -> ok [cond=\"a\\\"] }",
+		"duplicate node":            `digraph P { start start }`,
+		"invalid assignment key":    `digraph P { start [result="1x=true"] }`,
+		"empty assignment value":    `digraph P { start [result="x= "] }`,
+		"plus-signed number":        `digraph P { start [result="x=+1"] }`,
+		"literal with spaces":       `digraph P { start [result="x=a b"] }`,
+		"bare literal":              `digraph P { start [result="x=a.b"] }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parse(dot); err == nil {
+				t.Fatalf("Parse(%q) unexpectedly succeeded", dot)
+			}
+		})
+	}
+}
+
+func TestConditionErrorsPropagateThroughBooleanOperators(t *testing.T) {
+	for _, cond := range []string{`missing && true`, `missing || true`, `true && missing`, `false || missing`, `1 < missing`} {
+		t.Run(cond, func(t *testing.T) {
+			p, err := parse(`digraph P { start -> ok [cond=` + strconv.Quote(cond) + `] }`)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if _, err := p.Infer(nil); apperr.From(err) == nil || apperr.From(err).Code != apperr.InferenceError {
+				t.Fatalf("Infer() error = %v, want inference_error", err)
+			}
+		})
+	}
+}
+
+func TestCountsDescribeTheGraph(t *testing.T) {
+	p, err := parse(twoOutcomePolicy)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if p.NodeCount() != 3 || p.EdgeCount() != 2 {
+		t.Fatalf("NodeCount() = %d, EdgeCount() = %d", p.NodeCount(), p.EdgeCount())
 	}
 }

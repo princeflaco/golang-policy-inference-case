@@ -14,8 +14,8 @@ fi
 echo "pre-commit: go vet"
 go vet ./...
 
-echo "pre-commit: go test"
-go test ./...
+echo "pre-commit: go test + coverage (minimum 90%)"
+make -s cover
 
 echo "pre-commit: swagger freshness"
 make -s swagger

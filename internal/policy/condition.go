@@ -13,7 +13,40 @@ import (
 
 var numberPattern = regexp.MustCompile(`^-?[0-9]+(?:\.[0-9]+)?$`)
 
-func parseCondition(raw string, maxDepth int) (ast.Expr, error) {
+// condition is a compiled edge condition. Compilation enforces the whole
+// condition grammar once, at parse time, so evaluation only ever meets the
+// node kinds below and can fail only on state: missing variables or
+// incompatible types.
+type condition interface {
+	eval(state map[string]any) (bool, error)
+}
+
+// operand is one side of a comparison, or a value used directly as a
+// boolean condition.
+type operand interface {
+	value(state map[string]any) (any, error)
+}
+
+type (
+	andCondition     struct{ left, right condition }
+	orCondition      struct{ left, right condition }
+	compareCondition struct {
+		op          token.Token
+		left, right operand
+	}
+	// boolCondition is an identifier or literal used as a condition on its
+	// own, e.g. `active` or `true`.
+	boolCondition struct {
+		name    string
+		operand operand
+	}
+	literal  struct{ v any }
+	variable struct{ name string }
+)
+
+// parseCondition reuses go/parser for precedence and grouping, bounds the
+// expression depth, and compiles the accepted subset.
+func parseCondition(raw string, maxDepth int) (condition, error) {
 	expr, err := goparser.ParseExpr(raw)
 	if err != nil {
 		return nil, err
@@ -21,178 +54,157 @@ func parseCondition(raw string, maxDepth int) (ast.Expr, error) {
 	if depth := expressionDepth(expr); depth > maxDepth {
 		return nil, fmt.Errorf("expression depth %d exceeds limit %d", depth, maxDepth)
 	}
-	if err := validateCondition(expr); err != nil {
+	return compileCondition(expr)
+}
+
+func compileCondition(expr ast.Expr) (condition, error) {
+	switch e := expr.(type) {
+	case *ast.ParenExpr:
+		return compileCondition(e.X)
+	case *ast.Ident:
+		op, err := compileIdent(e)
+		if err != nil {
+			return nil, err
+		}
+		return boolCondition{name: e.Name, operand: op}, nil
+	case *ast.BinaryExpr:
+		switch e.Op {
+		case token.LAND, token.LOR:
+			left, err := compileCondition(e.X)
+			if err != nil {
+				return nil, err
+			}
+			right, err := compileCondition(e.Y)
+			if err != nil {
+				return nil, err
+			}
+			if e.Op == token.LAND {
+				return andCondition{left, right}, nil
+			}
+			return orCondition{left, right}, nil
+		case token.EQL, token.NEQ, token.GTR, token.LSS, token.GEQ, token.LEQ:
+			left, err := compileOperand(e.X)
+			if err != nil {
+				return nil, err
+			}
+			right, err := compileOperand(e.Y)
+			if err != nil {
+				return nil, err
+			}
+			return compareCondition{op: e.Op, left: left, right: right}, nil
+		default:
+			return nil, fmt.Errorf("operator %s is not supported", e.Op)
+		}
+	default:
+		return nil, errors.New("condition must be a comparison or boolean value")
+	}
+}
+
+func compileOperand(expr ast.Expr) (operand, error) {
+	switch e := expr.(type) {
+	case *ast.ParenExpr:
+		return compileOperand(e.X)
+	case *ast.Ident:
+		return compileIdent(e)
+	case *ast.BasicLit:
+		switch e.Kind {
+		case token.STRING:
+			s, err := unquotePolicyString(e.Value)
+			if err != nil {
+				return nil, err
+			}
+			return literal{s}, nil
+		case token.INT, token.FLOAT:
+			return numberLiteral(e.Value)
+		default:
+			return nil, fmt.Errorf("literal kind %s is not supported", e.Kind)
+		}
+	case *ast.UnaryExpr:
+		if e.Op != token.SUB {
+			return nil, fmt.Errorf("operator %s is not supported", e.Op)
+		}
+		lit, ok := e.X.(*ast.BasicLit)
+		if !ok || (lit.Kind != token.INT && lit.Kind != token.FLOAT) {
+			return nil, errors.New("negative literals must be numeric")
+		}
+		return numberLiteral("-" + lit.Value)
+	default:
+		return nil, fmt.Errorf("unsupported operand %T", expr)
+	}
+}
+
+func compileIdent(e *ast.Ident) (operand, error) {
+	switch e.Name {
+	case "true":
+		return literal{true}, nil
+	case "false":
+		return literal{false}, nil
+	}
+	if !identifierPattern.MatchString(e.Name) {
+		return nil, fmt.Errorf("invalid identifier %q", e.Name)
+	}
+	return variable{e.Name}, nil
+}
+
+func numberLiteral(raw string) (operand, error) {
+	if !numberPattern.MatchString(raw) {
+		return nil, fmt.Errorf("invalid number literal %q", raw)
+	}
+	number, err := parseNumber(raw)
+	if err != nil {
 		return nil, err
 	}
-	return expr, nil
+	return literal{number}, nil
 }
 
-func validateCondition(expr ast.Expr) error {
-	switch value := expr.(type) {
-	case *ast.ParenExpr:
-		return validateCondition(value.X)
-	case *ast.Ident:
-		if value.Name == "true" || value.Name == "false" || identifierPattern.MatchString(value.Name) {
-			return nil
-		}
-		return fmt.Errorf("invalid identifier %q", value.Name)
-	case *ast.BinaryExpr:
-		switch value.Op {
-		case token.EQL, token.NEQ, token.GTR, token.LSS, token.GEQ, token.LEQ:
-			if err := validateOperand(value.X); err != nil {
-				return err
-			}
-			return validateOperand(value.Y)
-		case token.LAND, token.LOR:
-			if err := validateCondition(value.X); err != nil {
-				return err
-			}
-			return validateCondition(value.Y)
-		default:
-			return fmt.Errorf("operator %s is not supported", value.Op)
-		}
-	default:
-		return errors.New("condition must be a comparison or boolean value")
+func (c andCondition) eval(state map[string]any) (bool, error) {
+	left, err := c.left.eval(state)
+	if err != nil || !left {
+		return false, err
 	}
+	return c.right.eval(state)
 }
 
-func validateOperand(expr ast.Expr) error {
-	switch value := expr.(type) {
-	case *ast.ParenExpr:
-		return validateOperand(value.X)
-	case *ast.Ident:
-		if identifierPattern.MatchString(value.Name) {
-			return nil
-		}
-		return fmt.Errorf("invalid identifier %q", value.Name)
-	case *ast.BasicLit:
-		switch value.Kind {
-		case token.STRING:
-			_, err := unquotePolicyString(value.Value)
-			return err
-		case token.INT, token.FLOAT:
-			if numberPattern.MatchString(value.Value) {
-				return nil
-			}
-			return fmt.Errorf("invalid number literal %q", value.Value)
-		default:
-			return fmt.Errorf("literal kind %s is not supported", value.Kind)
-		}
-	case *ast.UnaryExpr:
-		if value.Op != token.SUB {
-			return fmt.Errorf("operator %s is not supported", value.Op)
-		}
-		lit, ok := value.X.(*ast.BasicLit)
-		if !ok || (lit.Kind != token.INT && lit.Kind != token.FLOAT) {
-			return errors.New("negative literals must be numeric")
-		}
-		if !numberPattern.MatchString(value.Op.String() + lit.Value) {
-			return fmt.Errorf("invalid number literal -%s", lit.Value)
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported operand %T", expr)
+func (c orCondition) eval(state map[string]any) (bool, error) {
+	left, err := c.left.eval(state)
+	if err != nil || left {
+		return left, err
 	}
+	return c.right.eval(state)
 }
 
-func evaluateCondition(expr ast.Expr, state map[string]any) (bool, error) {
-	switch value := expr.(type) {
-	case *ast.ParenExpr:
-		return evaluateCondition(value.X, state)
-	case *ast.Ident:
-		raw, err := conditionOperand(value, state)
-		if err != nil {
-			return false, err
-		}
-		result, ok := raw.(bool)
-		if !ok {
-			return false, inferenceError("condition %q is not boolean", value.Name)
-		}
-		return result, nil
-	case *ast.BinaryExpr:
-		switch value.Op {
-		case token.LAND, token.LOR:
-			left, err := evaluateCondition(value.X, state)
-			if err != nil {
-				return false, err
-			}
-			if value.Op == token.LAND && !left {
-				return false, nil
-			}
-			if value.Op == token.LOR && left {
-				return true, nil
-			}
-			return evaluateCondition(value.Y, state)
-		default:
-			left, err := conditionOperand(value.X, state)
-			if err != nil {
-				return false, err
-			}
-			right, err := conditionOperand(value.Y, state)
-			if err != nil {
-				return false, err
-			}
-			return compareValues(left, right, value.Op)
-		}
-	default:
-		return false, inferenceError("unsupported condition %T", expr)
+func (c compareCondition) eval(state map[string]any) (bool, error) {
+	left, err := c.left.value(state)
+	if err != nil {
+		return false, err
 	}
+	right, err := c.right.value(state)
+	if err != nil {
+		return false, err
+	}
+	return compareValues(left, right, c.op)
 }
 
-func conditionOperand(expr ast.Expr, state map[string]any) (any, error) {
-	switch value := expr.(type) {
-	case *ast.ParenExpr:
-		return conditionOperand(value.X, state)
-	case *ast.Ident:
-		switch value.Name {
-		case "true":
-			return true, nil
-		case "false":
-			return false, nil
-		}
-		raw, ok := state[value.Name]
-		if !ok {
-			return nil, inferenceError("variable %q is not defined", value.Name)
-		}
-		switch typed := raw.(type) {
-		case string, bool, float64:
-			return typed, nil
-		default:
-			return nil, inferenceError("variable %q has unsupported type %T", value.Name, raw)
-		}
-	case *ast.BasicLit:
-		switch value.Kind {
-		case token.STRING:
-			literal, err := unquotePolicyString(value.Value)
-			if err != nil {
-				return nil, inferenceError("invalid string literal: %v", err)
-			}
-			return literal, nil
-		case token.INT, token.FLOAT:
-			number, err := parseNumber(value.Value)
-			if err != nil {
-				return nil, inferenceError("invalid number literal: %v", err)
-			}
-			return number, nil
-		default:
-			return nil, inferenceError("literal kind %s is not supported", value.Kind)
-		}
-	case *ast.UnaryExpr:
-		if value.Op != token.SUB {
-			return nil, inferenceError("operator %s is not supported", value.Op)
-		}
-		lit, ok := value.X.(*ast.BasicLit)
-		if !ok {
-			return nil, inferenceError("negative literal must be numeric")
-		}
-		number, err := parseNumber(value.Op.String() + lit.Value)
-		if err != nil {
-			return nil, inferenceError("invalid number literal: %v", err)
-		}
-		return number, nil
-	default:
-		return nil, inferenceError("unsupported operand %T", expr)
+func (c boolCondition) eval(state map[string]any) (bool, error) {
+	raw, err := c.operand.value(state)
+	if err != nil {
+		return false, err
 	}
+	result, ok := raw.(bool)
+	if !ok {
+		return false, inferenceError("condition %q is not boolean", c.name)
+	}
+	return result, nil
+}
+
+func (l literal) value(map[string]any) (any, error) { return l.v, nil }
+
+func (v variable) value(state map[string]any) (any, error) {
+	raw, ok := state[v.name]
+	if !ok {
+		return nil, inferenceError("variable %q is not defined", v.name)
+	}
+	return raw, nil
 }
 
 func compareValues(left, right any, op token.Token) (bool, error) {
@@ -200,23 +212,23 @@ func compareValues(left, right any, op token.Token) (bool, error) {
 	case string:
 		rightValue, ok := right.(string)
 		if !ok {
-			return false, inferenceError("cannot compare string with %T", right)
+			return false, inferenceError("cannot compare string with %s", typeName(right))
 		}
 		return compareEquality(leftValue, rightValue, op)
 	case bool:
 		rightValue, ok := right.(bool)
 		if !ok {
-			return false, inferenceError("cannot compare bool with %T", right)
+			return false, inferenceError("cannot compare bool with %s", typeName(right))
 		}
 		return compareEquality(leftValue, rightValue, op)
 	case float64:
 		rightValue, ok := right.(float64)
 		if !ok {
-			return false, inferenceError("cannot compare number with %T", right)
+			return false, inferenceError("cannot compare number with %s", typeName(right))
 		}
 		return compareNumbers(leftValue, rightValue, op)
 	default:
-		return false, inferenceError("unsupported value type %T", left)
+		return false, inferenceError("unsupported value type %s", typeName(left))
 	}
 }
 
@@ -243,10 +255,22 @@ func compareNumbers(left, right float64, op token.Token) (bool, error) {
 		return left < right, nil
 	case token.GEQ:
 		return left >= right, nil
-	case token.LEQ:
+	default: // token.LEQ: compileCondition admits only the six comparison operators
 		return left <= right, nil
+	}
+}
+
+// typeName names a state value in policy vocabulary rather than Go's.
+func typeName(value any) string {
+	switch value.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case float64:
+		return "number"
 	default:
-		return false, inferenceError("unsupported operator %s", op)
+		return fmt.Sprintf("%T", value)
 	}
 }
 

@@ -2,7 +2,6 @@ package policy
 
 import (
 	"fmt"
-	"go/ast"
 	"regexp"
 	"sort"
 	"strings"
@@ -59,7 +58,7 @@ type assignment struct {
 
 type edge struct {
 	to   string
-	expr ast.Expr
+	cond condition
 }
 
 // Parse converts the approved subset of DOT into an executable policy,
@@ -183,7 +182,7 @@ func Parse(dot string, limits Limits) (*Policy, error) {
 			if len(rawCond) > limits.MaxConditionBytes {
 				return nil, invalidPolicy("edge %q -> %q cond exceeds %d bytes", from, to, limits.MaxConditionBytes)
 			}
-			expr, err := parseCondition(rawCond, limits.MaxExpressionDepth)
+			cond, err := parseCondition(rawCond, limits.MaxExpressionDepth)
 			if err != nil {
 				return nil, invalidPolicy("edge %q -> %q has invalid cond: %v", from, to, err)
 			}
@@ -193,7 +192,7 @@ func Parse(dot string, limits Limits) (*Policy, error) {
 			if len(p.nodes) > limits.MaxPolicyNodes {
 				return nil, invalidPolicy("policy has more than %d nodes", limits.MaxPolicyNodes)
 			}
-			fromNode.edges = append(fromNode.edges, &edge{to: to, expr: expr})
+			fromNode.edges = append(fromNode.edges, &edge{to: to, cond: cond})
 
 		case *gvast.Subgraph:
 			return nil, invalidPolicy("subgraphs are not supported")
@@ -237,7 +236,7 @@ func (p *Policy) Infer(input map[string]any) (map[string]any, error) {
 
 		var next string
 		for _, edge := range n.edges {
-			matched, err := evaluateCondition(edge.expr, state)
+			matched, err := edge.cond.eval(state)
 			if err != nil {
 				return nil, err
 			}

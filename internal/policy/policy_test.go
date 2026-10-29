@@ -509,3 +509,58 @@ func TestParseResultAcceptsDigitLeadingSimpleStrings(t *testing.T) {
 func parse(dot string) (*Policy, error) {
 	return Parse(dot, DefaultLimits())
 }
+
+func TestConditionSemantics(t *testing.T) {
+	tests := []struct {
+		name    string
+		cond    string
+		input   map[string]any
+		matched bool
+		code    apperr.Code
+	}{
+		{"true literal", `true`, nil, true, ""},
+		{"false literal", `false`, nil, false, ""},
+		{"boolean variable", `active`, map[string]any{"active": true}, true, ""},
+		{"negative literal", `score>-0.5`, map[string]any{"score": 0.0}, true, ""},
+		{"parenthesised operand", `(age)>=18`, map[string]any{"age": 18.0}, true, ""},
+		{"literal on the left", `18<=age`, map[string]any{"age": 20.0}, true, ""},
+		{"string inequality", `segment!="prime"`, map[string]any{"segment": "basic"}, true, ""},
+		{"non-boolean identifier", `score`, map[string]any{"score": 1.0}, false, apperr.InferenceError},
+		{"missing variable", `age>=18`, nil, false, apperr.InferenceError},
+		{"string ordering", `segment>"a"`, map[string]any{"segment": "b"}, false, apperr.InferenceError},
+		{"bool vs number", `active==1`, map[string]any{"active": true}, false, apperr.InferenceError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dot := `digraph P { start -> ok [cond=` + strconv.Quote(test.cond) + `] ok [result="matched=true"] }`
+			p, err := parse(dot)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			got, err := p.Infer(test.input)
+			if test.code != "" {
+				if apiErr := apperr.From(err); apiErr == nil || apiErr.Code != test.code {
+					t.Fatalf("Infer() error = %v, want code %s", err, test.code)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Infer() error = %v", err)
+			}
+			if matched := got["matched"] == true; matched != test.matched {
+				t.Fatalf("matched = %v, want %v", matched, test.matched)
+			}
+		})
+	}
+}
+
+func TestParseRejectsConditionsWithInvalidPolicyCode(t *testing.T) {
+	for _, cond := range []string{`age+1>18`, `-age>1`, `--1<0`, `"a"`, `1.5e3>0`, `'a'=="a"`, `segment=="bad\r"`} {
+		t.Run(cond, func(t *testing.T) {
+			_, err := parse(`digraph P { start -> ok [cond=` + strconv.Quote(cond) + `] }`)
+			if apiErr := apperr.From(err); apiErr == nil || apiErr.Code != apperr.InvalidPolicy {
+				t.Fatalf("Parse() error = %v, want invalid_policy", err)
+			}
+		})
+	}
+}

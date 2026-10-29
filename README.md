@@ -348,3 +348,8 @@ Essas medições não são medições AWS Lambda. A tentativa anterior de carga 
 - **Relatório de design patterns**: `docs/reports/design-patterns.md` — mapeia onde cada padrão se encaixa e documenta o padrão implementado (*Functional Options* para limites do `policy.Parse`, ex.: `policy.Parse(dot, policy.WithLimits(l))`).
 - **Relatório de performance**: `docs/reports/performance.md` — metodologia, ambiente, benchmarks do motor e teste de carga HTTP real (50 RPS, P90 ~0,87 ms).
 - **Makefile**: alvos `test`, `test-race`, `vet`, `build`, `build-lambda`, `bench`, `load-test`, `docker-build`, `sam-build`, `sam-local` (com `--warm-containers EAGER`) e `clean`.
+
+## Testando a API manualmente
+
+- `tools/api/policy-inference.http` — requests prontos para VS Code (extensão REST Client) ou Rider/IntelliJ; ajuste a variável `@host`.
+- `tools/api/policy-inference.postman_collection.json` — collection Postman/Insomnia com happy paths, casos de erro e testes automáticos de status/código/correlation id.

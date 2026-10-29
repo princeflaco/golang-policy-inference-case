@@ -110,7 +110,7 @@ Resumo do [relatório completo](docs/reports/performance.md) (metodologia, ambie
 ```bash
 go test -run '^$' -bench . -benchmem -count=3 ./internal/policy   # benchmarks do motor, por forma de política
 make load-test                                                  # 50 RPS via httptest — formas medium + complex (~140 s)
-make perf-container                                             # k6 em container separado
+make perf-container                                             # k6 em container separado, ambas as formas
 ```
 
 São medições locais: não incluem cold start de Lambda nem API Gateway. Para emular via SAM, use `make sam-local`.

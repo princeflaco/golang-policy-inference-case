@@ -118,14 +118,20 @@ agendamento do Windows — não um padrão da carga.
 
 A aplicação roda em container distroless (`tools/perf/Dockerfile`,
 `HTTP_ADDR=:8080`, mesmo binário da imagem Lambda); o gerador de carga é
-`grafana/k6` em container separado. Reproduzir com `make perf-container`.
-Esta medição é anterior à revisão de arquitetura e não foi repetida depois.
+`grafana/k6` em container separado. Reproduzir com `make perf-container`
+(roda as duas formas; `make perf-container POLICY_SHAPES=complex` roda só uma).
+Medição feita depois da revisão de arquitetura, no binário atual.
 
 - 10 s de aquecimento + 60 s de medição a 50 iterações/s (constant-arrival-rate)
-- 3 502 requisições, 0 falhas, 100% dos checks aprovados
-- http_req_duration: média 2,15 ms, mediana 2,04 ms, **p(90) 2,56 ms**, p(95) 2,8 ms, máx 15,87 ms
-- Thresholds atendidos: `http_req_failed rate==0`, `p(90)<30`
+- Thresholds atendidos nas duas formas: `http_req_failed rate==0`, `p(90)<30`
 
-É a medição neutra mais próxima disponível localmente: container Linux,
-processo isolado, ferramenta de carga externa — ainda excluindo cold start de
-Lambda e saltos do API Gateway.
+| Forma | Requisições | Falhas | média | mediana | p(90) | p(95) | máx |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| medium | 3 501 | 0 | 2,27 ms | 2,18 ms | **2,71 ms** | 2,96 ms | 18,87 ms |
+| complex | 3 502 | 0 | 4,81 ms | 3,12 ms | **4,05 ms** | 4,61 ms | 55,45 ms |
+
+A forma complexa envia ~10× mais dados (24 MB contra 2,3 MB no agregado) e
+multiplica a mediana por ~1,4 — coerente com o `Parse` por requisição medido
+nos benchmarks. É a medição neutra mais próxima disponível localmente:
+container Linux, processo isolado, ferramenta de carga externa — ainda
+excluindo cold start de Lambda e saltos do API Gateway.

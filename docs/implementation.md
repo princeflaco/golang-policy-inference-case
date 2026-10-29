@@ -14,14 +14,14 @@ antes da implementação (R0), registradas na spec em vez de decididas
 silenciosamente.
 
 ## Incrementos da spec
-
+  
 | Etapa | Entrega |
 | --- | --- |
 | R0 | Contrato fechado: gramática de identificadores, literais, escapes, códigos de erro HTTP, limites configuráveis, payload API Gateway v2 |
 | R1 | Fluxo real mínimo: `POST /infer` via SAM + container Lambda, interpretando comparação numérica com duas saídas |
 | R2 | Comparações e atribuições para string, number e boolean: igualdade por tipo, ordenação só numérica, literais e escapes, sem conversão automática |
 | R3 | Percurso em DAGs com etapas intermediárias: atribuições em `start` e nós, primeira saída verdadeira na ordem do DOT, folha ou sem-saída encerrando, estado isolado por requisição |
-| R4 | Condições compostas: `&&`, `||`, parênteses e precedência com curto-circuito; variável ausente só erra quando acessada; falha sem output parcial |
+| R4 | Condições compostas: `&&`, `\|\|`, parênteses e precedência com curto-circuito; variável ausente só erra quando acessada; falha sem output parcial |
 | R5 | Rejeições consistentes: validação da política inteira (inclusive trechos não percorridos), construções proibidas, tipos de entrada e casos HTTP completos |
 | R6 | Limites e observabilidade: cinco limites configuráveis aplicados antes do parsing quando possível, 413, logging de duração/falhas sem expor dados |
 | R7 | Desempenho e reprodutibilidade: benchmark do motor, carga HTTP a 50 RPS com P90 documentado, instruções reproduzidas de árvore limpa |
